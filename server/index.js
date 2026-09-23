@@ -17,6 +17,7 @@ const isProduction = process.env.NODE_ENV === 'production';
 const devLogin = !isProduction && process.env.DEV_LOGIN === '1';
 const oauthReady = Boolean(process.env.KAROTTER_CLIENT_ID && process.env.PUBLIC_ORIGIN);
 const oauthBase = 'https://karotter.com/api/oauth';
+const oauthAuthorizeUrl = 'https://api.karotter.com/api/oauth/authorize';
 const chatTimes = new Map();
 const scoreTimes = new Map();
 const assetCache = new Map();
@@ -137,7 +138,7 @@ const server = http.createServer(async (req, res) => {
       const verifier = crypto.randomBytes(32).toString('base64url');
       const challenge = crypto.createHash('sha256').update(verifier).digest('base64url');
       const redirectUri = `${process.env.PUBLIC_ORIGIN.replace(/\/$/, '')}/auth/callback`;
-      const target = new URL(`${oauthBase}/authorize`);
+      const target = new URL(oauthAuthorizeUrl);
       target.searchParams.set('response_type', 'code');
       target.searchParams.set('client_id', process.env.KAROTTER_CLIENT_ID);
       target.searchParams.set('redirect_uri', redirectUri);

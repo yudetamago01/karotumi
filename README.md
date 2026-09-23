@@ -46,6 +46,8 @@ Render の Web Service 作成画面から手動で設定する場合は、Root D
 
 `KAROTTER_CLIENT_SECRET` は Karotter 側で confidential client として発行した場合に設定します。Karotter の[設定ページ](https://karotter.com/settings)で OAuth アプリを作成し、コールバック URL に `https://<サービス名>.onrender.com/auth/callback` を登録してください。`PUBLIC_ORIGIN` には `https://<サービス名>.onrender.com` を設定します。認可に使うスコープは `profile` です。
 
+ブラウザーの認可画面は `https://api.karotter.com/api/oauth/authorize` を使います。`karotter.com` 側の同じパスでは、ログイン済みでもログイン画面に戻る場合があります。
+
 ルームとランキングは既存 Supabase プロジェクト内の専用テーブル `public.karotter_stack_rooms` と `public.karotter_stack_solo_scores` に保存します。両テーブルは作成済みで、構造は [db/karotter_stack_rooms.sql](db/karotter_stack_rooms.sql) と [db/karotter_stack_solo_scores.sql](db/karotter_stack_solo_scores.sql) に記録しています。匿名ユーザーには直接アクセス権を付けず、サーバーが service role で読み書きします。鍵は GitHub にコミットしないでください。
 
 Render の無料サービスは待機中にスリープし、再起動時には進行中だった対戦を開始待ちへ戻します。ルームとチャットは Supabase に保存されます。
