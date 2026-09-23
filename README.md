@@ -37,6 +37,8 @@ npm run dev:server
 
 `render.yaml` は無料の Node Web Service 用です。Node.js 22 と Singapore リージョンを指定しています。GitHub リポジトリを Render Blueprint に接続し、次の環境変数を設定してください。
 
+Render の Web Service 作成画面から手動で設定する場合は、Root Directory を空欄、Build Command を `npm ci --include=dev && npm run build`、Start Command を `npm run start` にしてください。`NODE_ENV=production` でもビルド用の Vite をインストールするために `--include=dev` が必要です。
+
 - `PUBLIC_ORIGIN`: Render の公開 URL
 - `KAROTTER_CLIENT_ID`: Karotter OAuth アプリの Client ID
 - `KAROTTER_CLIENT_SECRET`: confidential client の場合のみ
