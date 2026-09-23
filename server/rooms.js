@@ -59,12 +59,22 @@ function serialize(room) {
     turnIndex: room.turnIndex, term: room.term, turnDeadline: room.turnDeadline,
     spawnY: room.spawnY, winnerId: room.winnerId, activeId: room.active?.id || null,
     pieces: room.pieces.map(p => ({
-      id: p.id, term: p.term, ownerId: p.ownerId, shape: p.shape,
+      id: p.id, term: p.term, ownerId: p.ownerId,
       x: p.body.position.x, y: p.body.position.y, angle: p.body.angle,
-      vx: p.body.velocity.x, vy: p.body.velocity.y, av: p.body.angularVelocity,
       offsetX: p.offsetX, offsetY: p.offsetY,
-      landed: p.landed, landingTicks: p.landingTicks, stableTicks: p.stableTicks,
     })),
+    messages: room.messages.slice(-50),
+  };
+}
+
+function storageState(room) {
+  // A restarted server always returns a match to the lobby. Persist only
+  // the data needed for that recovery, not the large physics masks/pile.
+  return {
+    phase: room.phase, hostId: room.hostId,
+    members: [...room.members.values()], order: room.order,
+    turnIndex: -1, term: null, turnDeadline: 0,
+    spawnY: 160, winnerId: null, pieces: [],
     messages: room.messages.slice(-50),
   };
 }
@@ -113,13 +123,19 @@ async function cleanupOldRooms() {
 export async function persist(room) {
   if (!databaseReady()) return;
   room.lastPersistAttempt = Date.now();
+  room.dirty = false;
   room.persistChain = room.persistChain.catch(() => {}).then(async () => {
-    await dbRequest('karotter_stack_rooms?on_conflict=id', {
-      method: 'POST',
-      headers: { Prefer: 'resolution=merge-duplicates' },
-      body: JSON.stringify({ id: room.id, password_hash: room.passwordHash, state: serialize(room), updated_at: new Date().toISOString() }),
-    });
-    room.lastPersist = Date.now();
+    try {
+      await dbRequest('karotter_stack_rooms?on_conflict=id', {
+        method: 'POST',
+        headers: { Prefer: 'resolution=merge-duplicates' },
+        body: JSON.stringify({ id: room.id, password_hash: room.passwordHash, state: storageState(room), updated_at: new Date().toISOString() }),
+      });
+      room.lastPersist = Date.now();
+    } catch (error) {
+      room.dirty = true;
+      throw error;
+    }
   });
   await room.persistChain;
 }
@@ -181,15 +197,16 @@ export function joinRoom(room, user, password = '') {
   return room.members.get(user.id);
 }
 
-export function publicState(room, viewerId) {
+export function publicState(room, viewerId, includeMessages = true) {
   const data = serialize(room);
   delete data.order;
+  if (!includeMessages) delete data.messages;
   return { ...data, currentPlayerId: room.order[room.turnIndex] || null, leaderId: room.hostId, viewerId };
 }
 
 export function publish(room) {
   room.dirty = true;
-  const payload = `event: state\ndata: ${JSON.stringify(publicState(room, null))}\n\n`;
+  const payload = `event: state\ndata: ${JSON.stringify(publicState(room, null, false))}\n\n`;
   for (const response of room.listeners) {
     try { response.write(payload); }
     catch { room.listeners.delete(response); }
@@ -203,9 +220,15 @@ export function subscribe(room, response) {
 }
 
 function broadcastTick(room) {
+  const pieces = room.pieces.flatMap((p, index) => p.body.isSleeping ? [] : [[
+    index,
+    Math.round(p.body.position.x * 10) / 10,
+    Math.round(p.body.position.y * 10) / 10,
+    Math.round(p.body.angle * 1000) / 1000,
+  ]]);
+  if (!pieces.length) return;
   const payload = `event: tick\ndata: ${JSON.stringify({
-    pieces: room.pieces.map(p => ({ id: p.id, x: p.body.position.x, y: p.body.position.y, angle: p.body.angle })),
-    turnDeadline: room.turnDeadline,
+    pieces,
   })}\n\n`;
   for (const response of room.listeners) {
     try { response.write(payload); }
@@ -352,7 +375,12 @@ export async function addMessage(room, user, body) {
   const message = { id: crypto.randomUUID(), room_id: room.id, user_id: user.id, name: user.name, avatar: user.avatar || member.avatar || null, body, created_at: new Date().toISOString() };
   room.messages.push(message);
   room.messages = room.messages.slice(-50);
-  publish(room);
+  room.dirty = true;
+  const payload = `event: chat\ndata: ${JSON.stringify(message)}\n\n`;
+  for (const response of room.listeners) {
+    try { response.write(payload); }
+    catch { room.listeners.delete(response); }
+  }
   return message;
 }
 
@@ -391,13 +419,12 @@ setInterval(() => {
     try {
       if (room.phase === 'playing') {
         step(room);
-        if (room.listeners.size && Date.now() - (room.lastBroadcast || 0) >= 100) {
+        if (room.listeners.size && Date.now() - (room.lastBroadcast || 0) >= 166) {
           room.lastBroadcast = Date.now();
           broadcastTick(room);
         }
       }
-      if ((room.dirty || room.phase === 'playing') && Date.now() - (room.lastPersistAttempt || 0) > 5000) {
-        room.dirty = false;
+      if (room.dirty && Date.now() - (room.lastPersistAttempt || 0) > 5000) {
         persist(room).catch(error => console.error('Room persistence:', error.message));
       }
     } catch (error) { console.error('Room loop:', error); }

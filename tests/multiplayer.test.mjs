@@ -47,18 +47,36 @@ test('two players join, start, chat, and receive room events', async () => {
 
   const chat = await request(`/api/rooms/${id}/chat`, { method: 'POST', headers: { Cookie: b.cookie }, body: JSON.stringify({ body: 'よろしく！' }) });
   assert.equal(chat.response.status, 200);
-  assert.equal(chat.data.room.messages.at(-1).body, 'よろしく！');
+  assert.equal(chat.data.message.body, 'よろしく！');
 
   const spectatorChat = await request(`/api/rooms/${id}/chat`, { method: 'POST', headers: { Cookie: c.cookie }, body: JSON.stringify({ body: '観戦します' }) });
   assert.equal(spectatorChat.response.status, 200);
-  assert.equal(spectatorChat.data.room.messages.at(-1).user_id, c.user.id);
+  assert.equal(spectatorChat.data.message.user_id, c.user.id);
 
   const controller = new AbortController();
   const stream = await fetch(`${base}/api/rooms/${id}/events`, { headers: { Cookie: a.cookie, Origin: origin }, signal: controller.signal });
   assert.equal(stream.status, 200);
   assert.match(stream.headers.get('content-type'), /text\/event-stream/);
-  const first = await stream.body.getReader().read();
+  const reader = stream.body.getReader();
+  const first = await reader.read();
   assert.match(new TextDecoder().decode(first.value), /event: state/);
+  const nextChat = await request(`/api/rooms/${id}/chat`, { method: 'POST', headers: { Cookie: a.cookie }, body: JSON.stringify({ body: '差分配信' }) });
+  assert.equal(nextChat.response.status, 200);
+  const event = await reader.read();
+  assert.match(new TextDecoder().decode(event.value), /event: chat/);
+  const currentCookie = started.data.room.currentPlayerId === a.user.id ? a.cookie : b.cookie;
+  const dropped = await request(`/api/rooms/${id}/drop`, { method: 'POST', headers: { Cookie: currentCookie }, body: JSON.stringify({ x: 500 }) });
+  assert.equal(dropped.response.status, 200);
+  let updates = '';
+  for (let i = 0; i < 12 && !updates.includes('event: tick'); i++) {
+    const chunk = await Promise.race([
+      reader.read(),
+      new Promise((_, reject) => setTimeout(() => reject(new Error('tick timeout')), 3000)),
+    ]);
+    updates += new TextDecoder().decode(chunk.value);
+  }
+  assert.match(updates, /event: tick\ndata: \{"pieces":\[\[\d+,/);
+  assert.doesNotMatch(updates, /"shape":/);
   controller.abort();
 
   const ended = await request(`/api/rooms/${id}/leave`, { method: 'POST', headers: { Cookie: b.cookie }, body: '{}' });

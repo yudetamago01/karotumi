@@ -168,8 +168,9 @@ export async function openMultiplayer(app, onHome, sfx) {
     app.querySelector('#winner-banner').textContent = room.phase === 'ended' ? `${room.members.find(m => m.id === room.winnerId)?.name || '勝者なし'} の勝ち！` : '';
     statusLists();
     renderMessages();
-    if (room.phase === 'playing' && room.term && model.lastShapeTerm !== room.term) {
-      model.lastShapeTerm = room.term;
+    const shapeTurn = `${room.term}:${room.turnDeadline}`;
+    if (room.phase === 'playing' && room.term && room.turnDeadline > 0 && room.currentPlayerId === model.user.id && model.lastShapeTerm !== shapeTurn) {
+      model.lastShapeTerm = shapeTurn;
       const sprite = spriteFor(room.term);
       api(`/api/rooms/${room.id}/shape`, shapeFor(room.term, sprite)).catch(() => {});
     }
@@ -187,7 +188,7 @@ export async function openMultiplayer(app, onHome, sfx) {
 
   function gameFrame(now = performance.now()) {
     if (model.disposed || !model.room || !app.querySelector('#multi-stage')) return;
-    // The server sends authoritative positions at 10Hz. Rendering this view
+    // The server sends moving positions at 6Hz. Rendering this view
     // at 30fps is enough for interpolation and avoids making every compound
     // text mask redraw at the full monitor refresh rate.
     if (now - model.lastDraw < 33) {
@@ -335,15 +336,26 @@ export async function openMultiplayer(app, onHome, sfx) {
     model.stream = new EventSource(`${API_ORIGIN}/api/rooms/${room.id}/events`, { withCredentials: true });
     model.stream.addEventListener('state', event => {
       if (model.disposed) return;
-      model.room = JSON.parse(event.data);
+      const next = JSON.parse(event.data);
+      if (!next.messages) next.messages = model.room?.messages || [];
+      model.room = next;
       renderRoomState();
+    });
+    model.stream.addEventListener('chat', event => {
+      if (model.disposed || !model.room) return;
+      const message = JSON.parse(event.data);
+      if (model.room.messages.some(item => item.id === message.id)) return;
+      model.room.messages.push(message);
+      model.room.messages = model.room.messages.slice(-50);
+      renderMessages();
     });
     model.stream.addEventListener('tick', event => {
       if (model.disposed || !model.room) return;
       const tick = JSON.parse(event.data);
-      const positions = new Map(tick.pieces.map(p => [p.id, p]));
-      for (const piece of model.room.pieces) Object.assign(piece, positions.get(piece.id) || {});
-      model.room.turnDeadline = tick.turnDeadline;
+      for (const [index, x, y, angle] of tick.pieces) {
+        const piece = model.room.pieces[index];
+        if (piece) Object.assign(piece, { x, y, angle });
+      }
     });
     model.stream.onerror = () => {
       showError('再接続しています…');

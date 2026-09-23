@@ -15,6 +15,7 @@ button:focus-visible, a:focus-visible, input:focus-visible {
 }
 .app-shell { position: relative; width: 100%; height: 100%; height: 100dvh; overflow: hidden; }
 .home-screen, .settings-screen { background: #b8e9fb; }
+.ranking-screen { background: #b8e9fb; }
 .home-center {
   position: absolute;
   left: 50%;
@@ -70,6 +71,40 @@ button:focus-visible, a:focus-visible, input:focus-visible {
   box-shadow: 7px 8px 0 #6cc7ed;
 }
 .settings-panel h1 { margin: 0 0 25px; text-align: center; font-size: 38px; font-weight: 900; }
+.ranking-panel {
+  position: absolute;
+  top: 50%; left: 50%;
+  width: min(620px, calc(100% - 32px));
+  max-height: calc(100% - 32px);
+  transform: translate(-50%, -50%);
+  overflow: auto;
+  padding: 30px 32px 26px;
+  border: 3px solid #0875aa;
+  border-radius: 24px;
+  background: #f8fdff;
+  box-shadow: 7px 8px 0 #6cc7ed;
+}
+.ranking-back { position: absolute; top: 18px; left: 18px; }
+.ranking-panel h1 { margin: 4px 50px 0; color: #086b9e; text-align: center; font-size: clamp(25px, 5vw, 36px); font-weight: 900; }
+.ranking-caption { margin: 4px 0 15px; color: #4a89a8; text-align: center; font-size: 13px; font-weight: 800; }
+.ranking-login { margin: 0 0 10px; text-align: center; }
+.ranking-login-actions { display: flex; flex-wrap: wrap; justify-content: center; align-items: center; gap: 12px; }
+.ranking-login-actions > .button { min-width: 180px; min-height: 46px; padding: 8px 14px; border-radius: 13px; font-size: 15px; text-decoration: none; }
+.ranking-login form { display: flex; flex-wrap: wrap; justify-content: center; align-items: end; gap: 8px; }
+.ranking-login label { display: grid; gap: 4px; text-align: left; font-size: 11px; font-weight: 900; }
+.ranking-login input { width: 150px; min-height: 39px; padding: 6px 9px; border: 2px solid #9bd8ed; border-radius: 10px; }
+.ranking-login form .button { min-width: 130px; min-height: 39px; padding: 6px 10px; border-radius: 10px; font-size: 13px; }
+.ranking-user { margin: 0; font-size: 13px; font-weight: 900; }
+.ranking-notice { min-height: 18px; margin: 8px 0; color: #9c3f50; text-align: center; font-size: 12px; font-weight: 800; }
+.ranking-list { display: grid; gap: 6px; margin: 0; padding: 0; list-style: none; }
+.ranking-list li { display: flex; min-height: 43px; align-items: center; gap: 10px; padding: 5px 10px; border: 1px solid #c4e8f5; border-radius: 12px; background: #fff; }
+.ranking-list .ranking-place { display: grid; width: 27px; height: 27px; flex: 0 0 auto; place-items: center; border-radius: 50%; background: #dff6ff; color: #086b9e; font-family: Fredoka, sans-serif; font-weight: 900; }
+.ranking-list li:nth-child(-n+3) .ranking-place { background: #078dc7; color: white; }
+.ranking-list img { width: 29px; height: 29px; flex: 0 0 auto; border-radius: 50%; object-fit: cover; }
+.ranking-name { min-width: 0; flex: 1; overflow: hidden; color: #145f88; font-weight: 800; text-overflow: ellipsis; white-space: nowrap; }
+.ranking-list li > strong { color: #0879af; font-family: Fredoka, sans-serif; font-size: 20px; }
+.ranking-list li > strong small { margin-left: 2px; font-family: "M PLUS Rounded 1c", sans-serif; font-size: 11px; }
+.ranking-empty { justify-content: center; color: #4a89a8; font-size: 13px; }
 .settings-back { position: absolute; top: 20px; left: 20px; }
 .setting-row {
   display: flex;

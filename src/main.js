@@ -7,6 +7,7 @@ import './style.css';
 const { Engine, Bodies, Body, Composite, Events, Sleeping } = Matter;
 const app = document.querySelector('#app');
 const inks = ['#087bb6', '#1466ad', '#0a91b9', '#456fbd', '#137e9e'];
+const API_ORIGIN = import.meta.env.DEV ? 'http://127.0.0.1:3001' : '';
 
 const saved = (() => {
   try { return JSON.parse(localStorage.getItem('karotter-stack-settings') || '{}'); }
@@ -25,6 +26,19 @@ let multiplayer = null;
 
 function saveSettings() { localStorage.setItem('karotter-stack-settings', JSON.stringify(settings)); }
 function randomTerm() { return TERMS[Math.floor(Math.random() * TERMS.length)]; }
+function escapeHtml(value) {
+  return String(value ?? '').replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[char]);
+}
+async function rankingApi(path, body) {
+  const response = await fetch(`${API_ORIGIN}${path}`, {
+    method: body === undefined ? 'GET' : 'POST', credentials: 'include',
+    headers: body === undefined ? {} : { 'Content-Type': 'application/json' },
+    body: body === undefined ? undefined : JSON.stringify(body),
+  });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(data.error || `通信エラー (${response.status})`);
+  return data;
+}
 
 function tone(freq, duration, type = 'sine', gain = .08, delay = 0) {
   if (type === 'triangle' ? !settings.music : !settings.sound) return;
@@ -89,13 +103,72 @@ function home() {
     <div class="home-buttons">
       <button class="button primary" id="start-btn">ひとりで積む</button>
       <button class="button secondary" id="multi-btn">みんなで積む</button>
+      <button class="button secondary" id="ranking-btn">ランキング</button>
       <button class="button secondary" id="settings-btn">設定</button>
     </div>
   </section>`, 'home-screen');
   document.querySelector('#start-btn').addEventListener('click', () => { sfx('tap'); startGame(); });
   document.querySelector('#multi-btn').addEventListener('click', () => { sfx('tap'); showMultiplayer(); });
+  document.querySelector('#ranking-btn').addEventListener('click', () => { sfx('tap'); showRanking(); });
   document.querySelector('#settings-btn').addEventListener('click', () => { sfx('tap'); showSettings(); });
   startMusic();
+}
+async function showRanking() {
+  stopGame();
+  multiplayer?.destroy();
+  multiplayer = null;
+  stopMusic();
+  screen = 'ranking';
+  shell(`<section class="ranking-panel">
+    <button class="icon-button ranking-back" id="ranking-back" aria-label="ホームへ戻る">←</button>
+    <h1>個数ランキング</h1>
+    <p class="ranking-caption">ひとりで積んだ最高個数</p>
+    <div id="ranking-login" class="ranking-login"></div>
+    <p id="ranking-notice" class="ranking-notice" role="status">読み込み中…</p>
+    <ol id="ranking-list" class="ranking-list"></ol>
+  </section>`, 'ranking-screen');
+  document.querySelector('#ranking-back').addEventListener('click', home);
+  const notice = document.querySelector('#ranking-notice');
+  const login = document.querySelector('#ranking-login');
+  const renderLogin = (user, config) => {
+    if (user) {
+      login.innerHTML = `<p class="ranking-user">ログイン中：${escapeHtml(user.name)}</p>`;
+      return;
+    }
+    const oauth = config?.oauthReady ? `<a class="button primary" href="${API_ORIGIN}/auth/start?next=ranking">Karotterでログイン</a>` : '';
+    const devForm = config?.devLogin ? '<form id="ranking-dev-login"><label>ローカルテスト名<input name="name" maxlength="24" required placeholder="名前"></label><button class="button secondary" type="submit">テストログイン</button></form>' : '';
+    login.innerHTML = `<div class="ranking-login-actions">${oauth}${devForm}</div>${!oauth && !devForm ? '<p>ランキングへの記録にはログインが必要です。</p>' : ''}`;
+    document.querySelector('#ranking-dev-login')?.addEventListener('submit', async event => {
+      event.preventDefault();
+      try {
+        await rankingApi('/auth/dev', { name: new FormData(event.currentTarget).get('name') });
+        await showRanking();
+      } catch (error) { notice.textContent = error.message; }
+    });
+  };
+  try {
+    const [data, me, config] = await Promise.all([
+      rankingApi('/api/ranking'), rankingApi('/api/me').catch(() => ({})), rankingApi('/api/config').catch(() => ({})),
+    ]);
+    if (screen !== 'ranking') return;
+    renderLogin(data.user || me.user, config);
+    const scores = Array.isArray(data.scores) ? data.scores.slice(0, 20) : [];
+    document.querySelector('#ranking-list').innerHTML = scores.length
+      ? scores.map((score, index) => `<li><span class="ranking-place">${index + 1}</span>${score.avatar ? `<img src="${escapeHtml(score.avatar)}" alt="" loading="lazy" referrerpolicy="no-referrer">` : ''}<span class="ranking-name">${escapeHtml(score.name)}</span><strong>${Number(score.bestCount) || 0}<small>こ</small></strong></li>`).join('')
+      : '<li class="ranking-empty">まだ記録がありません</li>';
+    notice.textContent = '';
+    const pending = Number(localStorage.getItem('karotter-stack-ranking-pending') || 0);
+    if (pending > 0 && (data.user || me.user)) {
+      const result = await rankingApi('/api/ranking', { count: pending });
+      localStorage.removeItem('karotter-stack-ranking-pending');
+      notice.textContent = `${pending}こを記録しました（自己ベスト ${result.bestCount}こ）`;
+      const refreshed = await rankingApi('/api/ranking');
+      document.querySelector('#ranking-list').innerHTML = (refreshed.scores || []).slice(0, 20).map((score, index) => `<li><span class="ranking-place">${index + 1}</span>${score.avatar ? `<img src="${escapeHtml(score.avatar)}" alt="" loading="lazy" referrerpolicy="no-referrer">` : ''}<span class="ranking-name">${escapeHtml(score.name)}</span><strong>${Number(score.bestCount) || 0}<small>こ</small></strong></li>`).join('') || '<li class="ranking-empty">まだ記録がありません</li>';
+    }
+  } catch (error) {
+    if (screen === 'ranking') notice.textContent = `${error.message}。サーバーに接続できません。`;
+  }
+  if (screen === 'ranking') startMusic();
 }
 async function showMultiplayer() {
   stopGame();
@@ -319,9 +392,21 @@ function gameOver() {
   document.querySelector('#overlay-root').innerHTML = `<div class="overlay"><section class="modal">
     <h2>ゲームオーバー</h2><p class="result">${game.score}<span>こ</span></p>
     <p class="modal-best">ベスト ${best}</p>
+    <button class="button primary" id="record-score-btn" ${game.score > 0 ? '' : 'hidden'}>ランキングに記録</button>
     <button class="button primary" id="again-btn">もういちど</button>
     <button class="button secondary" id="end-home-btn">ホームへ</button>
   </section></div>`;
+  document.querySelector('#record-score-btn').addEventListener('click', async event => {
+    const button = event.currentTarget;
+    button.disabled = true;
+    button.textContent = '記録中…';
+    localStorage.setItem('karotter-stack-ranking-pending', String(game.score));
+    try {
+      await rankingApi('/api/ranking', { count: game.score });
+      localStorage.removeItem('karotter-stack-ranking-pending');
+    } catch { /* Keep the score through the login redirect so it can be submitted afterward. */ }
+    await showRanking();
+  });
   document.querySelector('#again-btn').addEventListener('click', () => { sfx('tap'); startGame(); });
   document.querySelector('#end-home-btn').addEventListener('click', () => { sfx('tap'); home(); });
 }
@@ -426,4 +511,5 @@ function loop(now) {
 
 const openInvitation = new URLSearchParams(location.search);
 home();
-if (openInvitation.has('multi') || openInvitation.has('room')) showMultiplayer();
+if (openInvitation.has('ranking')) showRanking();
+else if (openInvitation.has('multi') || openInvitation.has('room')) showMultiplayer();

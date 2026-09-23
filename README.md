@@ -1,6 +1,6 @@
 # Karotter用語積み
 
-カロッターの用語を文字の形のまま土台へ積む、スカイブルー基調のブラウザーゲーム試作品です。ひとり用と、ルームIDで遊ぶマルチプレイを収録しています。
+カロッターの用語を文字の形のまま土台へ積む、スカイブルー基調のブラウザーゲーム試作品です。ひとり用、個数ランキング、ルームIDで遊ぶマルチプレイを収録しています。
 
 ## ローカル起動
 
@@ -27,6 +27,12 @@ npm run dev:server
 - プレイ中・観戦中のメンバーを分けて表示し、チャットはロビー・プレイ中・観戦中のどの状態でも利用できます。
 - OAuth のプロフィール画像はチャットのアイコンと名前に使います。
 
+## 個数ランキング
+
+ホームの「ランキング」から、ひとりで積んだ最高個数の上位20件を見られます。ゲームオーバー時の「ランキングに記録」で今回の個数を送信します。記録には Karotter ログインが必要で、未ログインならログイン後に送信します。各ユーザーの最高記録を1件だけ保持し、低い記録では上書きしません。ローカル開発時のテストログイン記録はメモリ上だけに保存します。
+
+試作品ではひとり用の物理演算がブラウザーで動き、送信された個数の真偽をサーバーで検証できません。正式な競争用ランキングにする場合は、サーバー側でプレイを検証する仕組みが必要です。
+
 ## Render と OAuth
 
 `render.yaml` は無料の Node Web Service 用です。Node.js 22 と Singapore リージョンを指定しています。GitHub リポジトリを Render Blueprint に接続し、次の環境変数を設定してください。
@@ -38,9 +44,15 @@ npm run dev:server
 
 `KAROTTER_CLIENT_SECRET` は Karotter 側で confidential client として発行した場合に設定します。Karotter の[設定ページ](https://karotter.com/settings)で OAuth アプリを作成し、コールバック URL に `https://<サービス名>.onrender.com/auth/callback` を登録してください。`PUBLIC_ORIGIN` には `https://<サービス名>.onrender.com` を設定します。認可に使うスコープは `profile` です。
 
-ルームの保存先は既存 Supabase プロジェクトの `public.karotter_stack_rooms` だけです。このテーブルは作成済みで、構造は [db/karotter_stack_rooms.sql](db/karotter_stack_rooms.sql) に記録しています。匿名ユーザーには直接アクセス権を付けず、サーバーが service role で読み書きします。鍵は GitHub にコミットしないでください。
+ルームとランキングは既存 Supabase プロジェクト内の専用テーブル `public.karotter_stack_rooms` と `public.karotter_stack_solo_scores` に保存します。両テーブルは作成済みで、構造は [db/karotter_stack_rooms.sql](db/karotter_stack_rooms.sql) と [db/karotter_stack_solo_scores.sql](db/karotter_stack_solo_scores.sql) に記録しています。匿名ユーザーには直接アクセス権を付けず、サーバーが service role で読み書きします。鍵は GitHub にコミットしないでください。
 
 Render の無料サービスは待機中にスリープし、再起動時には進行中だった対戦を開始待ちへ戻します。ルームとチャットは Supabase に保存されます。
+
+### 通信量
+
+容量とは別に、Render の外向き通信量と Supabase の egress が制限されます。[Render Hobby は月5 GB](https://render.com/docs/outbound-bandwidth)で、ブラウザーへの配信に加え、Render から Supabase へのリクエストも対象です。[Supabase Free は uncached 月5 GB、cached 月5 GB](https://supabase.com/docs/guides/platform/manage-your-usage/egress)で、DBの読み取りは uncached 側です。Supabase の枠は既存の Yude Strike と共有します。
+
+マルチプレイでは、動いている文字の位置だけを約6回/秒で送ります。チャットは新しい1件だけを配信し、ルームのDB保存は状態が変わったときに数秒分をまとめて行います。ランキング一覧は上位20件に絞り、サーバー内で60秒キャッシュします。JS/CSSは圧縮して配信します。これでも利用人数・プレイ時間によっては無料枠を超えるため、公開後は Render の Metrics / Billing と Supabase 組織の Usage で実測してください。
 
 ## 確認
 
@@ -48,6 +60,7 @@ Render の無料サービスは待機中にスリープし、再起動時には�
 npm run build
 node --test tests/multiplayer.test.mjs
 node --test tests/recovery.test.mjs
+node --test tests/ranking.test.mjs
 ```
 
 用語の表記は[カロッター用語辞典](https://karotter-wiki.vercel.app/index/index.html)を参考にしています。
