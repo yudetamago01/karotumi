@@ -248,7 +248,7 @@ async function startGame() {
   game = {
     canvas, ctx: canvas.getContext('2d'), engine, blocks: [], active: null,
     queue: [], pending: null, next: null, score: 0, paused: false, over: false,
-    cameraY: 0, targetX: 0, width: 0, height: 0, spawnY: 185,
+    viewScale: 1, targetX: 0, width: 0, height: 0, spawnY: 185,
     base: null, baseWidth: 0, particles: [], resizeObserver: null, accumulator: 0,
     landing: false, landingTicks: 0, stableTicks: 0,
   };
@@ -285,6 +285,7 @@ function sizeStage() {
   const rect = canvas.getBoundingClientRect();
   if (!rect.width || !rect.height) return;
   const oldWidth = game.width;
+  const oldBaseY = game.base?.position.y;
   game.width = rect.width;
   game.height = rect.height;
   const dpr = Math.min(window.devicePixelRatio || 1, 2);
@@ -299,19 +300,25 @@ function sizeStage() {
     game.targetX = game.width / 2;
   } else {
     const shift = (game.width - oldWidth) / 2;
+    const rise = game.height - 72 - oldBaseY;
     if (game.baseWidth !== baseWidth) Body.scale(game.base, baseWidth / game.baseWidth, 1);
     game.baseWidth = baseWidth;
     Body.setPosition(game.base, { x: game.width / 2, y: game.height - 72 });
-    if (Math.abs(shift) > 1) {
-      for (const block of game.blocks) Body.setPosition(block, { x: block.position.x + shift, y: block.position.y });
-      game.targetX += shift;
+    if (Math.abs(shift) > 1 || Math.abs(rise) > 1) {
+      for (const block of game.blocks) Body.setPosition(block, { x: block.position.x + shift, y: block.position.y + rise });
+      for (const particle of game.particles) { particle.x += shift; particle.y += rise; }
+      game.targetX = Math.max(20, Math.min(game.width - 20, game.targetX + shift));
     }
   }
+  const highest = game.blocks.reduce((y, block) => Math.min(y, block.bounds.min.y), game.base.position.y);
+  game.spawnY = Math.min(185, game.base.position.y - 100, ...(game.blocks.length ? [highest - 155] : []));
 }
 function onPointerMove(event) {
   if (!game || game.paused || game.over) return;
   const rect = game.canvas.getBoundingClientRect();
-  game.targetX = Math.max(20, Math.min(game.width - 20, event.clientX - rect.left));
+  const scale = game.viewScale;
+  const offsetX = game.width * (1 - scale) / 2;
+  game.targetX = Math.max(20, Math.min(game.width - 20, (event.clientX - rect.left - offsetX) / scale));
 }
 function onPointerDown(event) {
   if (!game || game.paused || game.over) return;
@@ -449,8 +456,11 @@ function draw() {
   ctx.clearRect(0, 0, W, H);
   ctx.fillStyle = '#dff6ff';
   ctx.fillRect(0, 0, W, H);
-  const cam = game.cameraY;
-  const baseY = base.position.y - cam;
+  const scale = game.viewScale;
+  const baseY = base.position.y;
+  ctx.save();
+  ctx.translate(W * (1 - scale) / 2, baseY * (1 - scale));
+  ctx.scale(scale, scale);
   ctx.fillStyle = '#fff';
   ctx.strokeStyle = '#176eaa';
   ctx.lineWidth = 3;
@@ -458,7 +468,7 @@ function draw() {
   if (!game.active && !game.over) {
     const sprite = pendingSprite();
     const x = Math.max(sprite.width / 2 + 6, Math.min(W - sprite.width / 2 - 6, game.targetX));
-    const y = spawnPosition() - cam;
+    const y = spawnPosition();
     ctx.save();
     ctx.strokeStyle = '#63bbe1';
     ctx.lineWidth = 2;
@@ -472,16 +482,27 @@ function draw() {
   }
   for (const body of game.blocks) {
     const { sprite, offsetX, offsetY } = body.plugin.text;
-    drawSprite(ctx, sprite, body.position.x, body.position.y - cam, body.angle, 1, offsetX, offsetY);
+    drawSprite(ctx, sprite, body.position.x, body.position.y, body.angle, 1, offsetX, offsetY);
   }
   for (const particle of game.particles) {
     ctx.globalAlpha = Math.max(0, particle.life / 45);
     ctx.fillStyle = '#fff';
     ctx.beginPath();
-    ctx.arc(particle.x, particle.y - cam, 2.5, 0, Math.PI * 2);
+    ctx.arc(particle.x, particle.y, 2.5, 0, Math.PI * 2);
     ctx.fill();
   }
   ctx.globalAlpha = 1;
+  ctx.restore();
+}
+function updateViewScale() {
+  const baseY = game.base.position.y;
+  const top = Math.min(
+    game.spawnY - pendingSprite().height / 2 - 12,
+    ...game.blocks.map(block => block.bounds.min.y - 12),
+  );
+  const topPadding = Math.min(110, Math.max(62, game.height * .28));
+  const target = Math.min(1, Math.max(0.1, (baseY - topPadding) / Math.max(1, baseY - top)));
+  game.viewScale += (target - game.viewScale) * .12;
 }
 function loop(now) {
   if (!game) return;
@@ -502,9 +523,8 @@ function loop(now) {
       particle.life--;
     }
     game.particles = game.particles.filter(p => p.life > 0);
-    const targetCamera = Math.min(0, spawnPosition() - 176);
-    game.cameraY += (targetCamera - game.cameraY) * .065;
   }
+  updateViewScale();
   draw();
   frame = requestAnimationFrame(loop);
 }
