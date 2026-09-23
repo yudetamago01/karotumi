@@ -18,6 +18,7 @@ const devLogin = !isProduction && process.env.DEV_LOGIN === '1';
 const oauthReady = Boolean(process.env.KAROTTER_CLIENT_ID && process.env.PUBLIC_ORIGIN);
 const oauthBase = 'https://karotter.com/api/oauth';
 const oauthAuthorizeUrl = 'https://api.karotter.com/api/oauth/authorize';
+const oauthLoginUrl = 'https://api.karotter.com/login';
 const chatTimes = new Map();
 const scoreTimes = new Map();
 const assetCache = new Map();
@@ -146,7 +147,10 @@ const server = http.createServer(async (req, res) => {
       target.searchParams.set('state', state);
       target.searchParams.set('code_challenge', challenge);
       target.searchParams.set('code_challenge_method', 'S256');
-      redirect(res, target.toString(), { 'Set-Cookie': cookie('ks_oauth', sign({ state, verifier, roomId, next, exp: Date.now() + 10 * 60_000 }), 600) });
+      // Karotter opens `next` on the login page's host, so both routes must use the API host.
+      const login = new URL(oauthLoginUrl);
+      login.searchParams.set('next', target.pathname + target.search);
+      redirect(res, login.toString(), { 'Set-Cookie': cookie('ks_oauth', sign({ state, verifier, roomId, next, exp: Date.now() + 10 * 60_000 }), 600) });
       return;
     }
     if (pathname === '/auth/callback' && req.method === 'GET') {

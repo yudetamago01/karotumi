@@ -17,7 +17,7 @@ async function unusedPort() {
   return port;
 }
 
-test('OAuth starts on the API host that recognizes a Karotter login', async t => {
+test('OAuth login and authorization stay on the same Karotter API host', async t => {
   const port = await unusedPort();
   const child = spawn(process.execPath, ['server/index.js'], {
     cwd: root,
@@ -47,8 +47,11 @@ test('OAuth starts on the API host that recognizes a Karotter login', async t =>
   }
   assert.ok(response, 'OAuth test server did not start');
   assert.equal(response.status, 302);
-  const target = new URL(response.headers.get('location'));
-  assert.equal(target.origin, 'https://api.karotter.com');
+  const login = new URL(response.headers.get('location'));
+  assert.equal(login.origin, 'https://api.karotter.com');
+  assert.equal(login.pathname, '/login');
+  const target = new URL(login.searchParams.get('next'), login.origin);
+  assert.equal(target.origin, login.origin);
   assert.equal(target.pathname, '/api/oauth/authorize');
   assert.equal(target.searchParams.get('redirect_uri'), 'https://karokaro.onrender.com/auth/callback');
   assert.equal(target.searchParams.get('scope'), 'profile');
