@@ -1,0 +1,24 @@
+services:
+  - type: web
+    name: karotter-term-stack
+    runtime: node
+    plan: free
+    region: singapore
+    buildCommand: npm ci && npm run build
+    startCommand: npm run start
+    healthCheckPath: /api/health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: SESSION_SECRET
+        generateValue: true
+      - key: PUBLIC_ORIGIN
+        sync: false
+      - key: KAROTTER_CLIENT_ID
+        sync: false
+      - key: KAROTTER_CLIENT_SECRET
+        sync: false
+      - key: SUPABASE_URL
+        value: https://oehpotcbfcpqbsvjagiq.supabase.co
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
