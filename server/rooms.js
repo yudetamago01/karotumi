@@ -1,8 +1,9 @@
 import crypto from 'node:crypto';
 import Matter from 'matter-js';
-import { TERMS } from '../src/terms.js';
+import { createTermPicker } from '../src/termPicker.js';
+import { makeCompoundTextBody } from '../src/physicsBody.js';
 
-const { Engine, Bodies, Body, Composite, Events, Sleeping } = Matter;
+const { Engine, Bodies, Composite, Events, Sleeping } = Matter;
 const WORLD_WIDTH = 1000;
 const BASE_Y = 650;
 const MAX_PLAYERS = 10;
@@ -38,17 +39,7 @@ function makeEngine(room) {
 }
 
 function makeBody(shape, x, y) {
-  const parts = shape.rectangles.map(rect => Bodies.rectangle(
-    x + rect.x - shape.width / 2,
-    y + rect.y - shape.height / 2,
-    rect.w,
-    rect.h,
-  ));
-  if (!parts.length) parts.push(Bodies.rectangle(x, y, 24, 24));
-  const body = Body.create({
-    label: 'term', parts, friction: .9, frictionStatic: 1.2,
-    restitution: 0, frictionAir: .035, density: .0017, sleepThreshold: 24,
-  });
+  const body = makeCompoundTextBody(shape.rectangles, shape.width, shape.height, x, y);
   return { body, offsetX: x - body.position.x, offsetY: y - body.position.y };
 }
 
@@ -289,7 +280,7 @@ function chooseTurn(room) {
     room.turnIndex = (room.turnIndex + 1) % room.order.length;
     if (room.members.get(room.order[room.turnIndex])?.status === 'playing') break;
   }
-  room.term = TERMS[Math.floor(Math.random() * TERMS.length)];
+  room.term = room.pickTerm();
   room.shape = null;
   room.turnDeadline = Date.now() + TURN_MS;
   publish(room);
@@ -300,6 +291,7 @@ export function startRoom(room, user) {
   if (room.hostId !== user.id) throw new Error('ルーム作成者だけが開始できます');
   if (room.order.length < 2) throw new Error('2人以上で開始できます');
   room.phase = 'playing';
+  room.pickTerm = createTermPicker();
   makeEngine(room);
   chooseTurn(room);
 }

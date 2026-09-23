@@ -1,6 +1,5 @@
-import Matter from 'matter-js';
+import { makeCompoundTextBody } from './physicsBody.js';
 
-const { Bodies, Body } = Matter;
 const emojiPattern = /[\p{Extended_Pictographic}\p{Regional_Indicator}\p{Emoji_Presentation}\u20e3]/u;
 const segmenter = new Intl.Segmenter('ja', { granularity: 'grapheme' });
 const spriteCache = new Map();
@@ -86,27 +85,31 @@ export function makeTextSprite(piece, stageWidth, color = '#086b9e') {
   let size = piece.emoji ? Math.min(76, stageWidth * .18) : Math.min(62, stageWidth * .13);
   size = Math.max(piece.emoji ? 48 : 34, Math.floor(size));
   ctx.font = fontFor(size, piece.emoji);
-  while (ctx.measureText(piece.text).width > maxWidth - 14 && size > 25) {
+  while (ctx.measureText(piece.text).width > maxWidth - 18 && size > 16) {
     size -= 2;
     ctx.font = fontFor(size, piece.emoji);
   }
-  const width = Math.ceil(ctx.measureText(piece.text).width + 18);
+  const naturalWidth = ctx.measureText(piece.text).width;
+  const horizontalScale = Math.min(1, (maxWidth - 18) / naturalWidth);
+  const width = Math.ceil(naturalWidth * horizontalScale + 18);
   const height = Math.ceil(size * 1.55 + 18);
   canvas.width = width;
   canvas.height = height;
   ctx.font = fontFor(size, piece.emoji);
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
+  ctx.translate(width / 2, height / 2);
+  ctx.scale(horizontalScale, 1);
   if (!piece.emoji) {
     ctx.lineWidth = Math.max(2, size * .045);
     ctx.lineJoin = 'round';
     ctx.strokeStyle = '#fff';
-    ctx.strokeText(piece.text, width / 2, height / 2);
+    ctx.strokeText(piece.text, 0, 0);
     ctx.fillStyle = color;
-    ctx.fillText(piece.text, width / 2, height / 2);
+    ctx.fillText(piece.text, 0, 0);
   } else {
     ctx.fillStyle = '#086b9e';
-    ctx.fillText(piece.text, width / 2, height / 2);
+    ctx.fillText(piece.text, 0, 0);
   }
 
   const pixels = ctx.getImageData(0, 0, width, height);
@@ -122,24 +125,7 @@ export function makeTextSprite(piece, stageWidth, color = '#086b9e') {
 }
 
 export function makeTextBody(sprite, x, y) {
-  const parts = sprite.rectangles.map(rect => Bodies.rectangle(
-    x + rect.x - sprite.width / 2,
-    y + rect.y - sprite.height / 2,
-    rect.w,
-    rect.h,
-  ));
-  // A missing font can produce a blank mask; keep the game operable then.
-  if (!parts.length) parts.push(Bodies.rectangle(x, y, 22, 22));
-  const body = Body.create({
-    label: 'term',
-    parts,
-    friction: .9,
-    frictionStatic: 1.2,
-    restitution: 0,
-    frictionAir: .035,
-    density: .0017,
-    sleepThreshold: 24,
-  });
+  const body = makeCompoundTextBody(sprite.rectangles, sprite.width, sprite.height, x, y);
   body.plugin.text = {
     sprite,
     offsetX: x - body.position.x,

@@ -1,5 +1,5 @@
 import Matter from 'matter-js';
-import { TERMS } from './terms.js';
+import { createTermPicker } from './termPicker.js';
 import { splitTerm, makeTextSprite, makeTextBody } from './textBodies.js';
 import { openMultiplayer } from './multi.js';
 import './style.css';
@@ -25,7 +25,6 @@ let musicStep = 0;
 let multiplayer = null;
 
 function saveSettings() { localStorage.setItem('karotter-stack-settings', JSON.stringify(settings)); }
-function randomTerm() { return TERMS[Math.floor(Math.random() * TERMS.length)]; }
 function escapeHtml(value) {
   return String(value ?? '').replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[char]);
 }
@@ -220,7 +219,7 @@ function stopGame() {
   game = null;
 }
 function dequeuePiece() {
-  if (!game.queue.length) game.queue.push(...splitTerm(randomTerm()));
+  if (!game.queue.length) game.queue.push(...splitTerm(game.pickTerm()));
   return game.queue.shift();
 }
 async function startGame() {
@@ -247,7 +246,7 @@ async function startGame() {
   engine.constraintIterations = 4;
   game = {
     canvas, ctx: canvas.getContext('2d'), engine, blocks: [], active: null,
-    queue: [], pending: null, next: null, score: 0, paused: false, over: false,
+    queue: [], pickTerm: createTermPicker(), pending: null, next: null, score: 0, paused: false, over: false,
     viewScale: 1, targetX: 0, width: 0, height: 0, spawnY: 185,
     base: null, baseWidth: 0, particles: [], resizeObserver: null, accumulator: 0,
     landing: false, landingTicks: 0, stableTicks: 0,
