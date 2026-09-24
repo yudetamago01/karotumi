@@ -11,6 +11,7 @@ test('multiplayer drop keeps the chosen angle in physics and room state', () => 
     turnDeadline: Date.now() + 10_000, spawnY: 160, winnerId: null,
     active: null, shape: null, pieces: [], messages: [], listeners: new Set(),
     engine: Matter.Engine.create(),
+    base: Matter.Bodies.rectangle(500, 650, 700, 28, { isStatic: true }),
   };
   const shape = {
     term: '回転', width: 200, height: 60,

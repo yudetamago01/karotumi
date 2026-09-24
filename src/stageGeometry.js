@@ -2,12 +2,13 @@
 // camera scales the world to fit a narrow viewport.
 export const TEXT_STAGE_WIDTH = 1300;
 const MIN_VIEW_WIDTH = 1000;
+const MAX_DISPLAY_SCALE = .75;
 const PLATE_WIDTH = 910;
 const BOTTOM_GAP = 72;
 const SPAWN_TOP = 185;
 
 export function stageGeometry(cssWidth, cssHeight) {
-  const displayScale = Math.min(1, cssWidth / MIN_VIEW_WIDTH);
+  const displayScale = Math.min(MAX_DISPLAY_SCALE, cssWidth / MIN_VIEW_WIDTH);
   const width = cssWidth / displayScale;
   const height = cssHeight / displayScale;
   return {

@@ -4,6 +4,7 @@ import { splitTerm, makeTextSprite, makeTextBody } from './textBodies.js';
 import { openMultiplayer } from './multi.js';
 import { bindHoldRotation, rotationIcon } from './rotationControls.js';
 import { stageGeometry, TEXT_STAGE_WIDTH } from './stageGeometry.js';
+import { initialDropVelocity, PHYSICS_STEP_MS } from './dropMotion.js';
 import './style.css';
 
 const { Engine, Bodies, Body, Composite, Events } = Matter;
@@ -436,6 +437,9 @@ function drop() {
   const x = pendingX(sprite);
   const body = makeTextBody(sprite, x, spawnPosition());
   Body.setAngle(body, game.pendingAngle);
+  const supportY = Math.min(game.base.bounds.min.y, ...game.blocks.map(block => block.bounds.min.y));
+  const distance = Math.max(0, supportY - body.bounds.max.y);
+  Body.setVelocity(body, { x: 0, y: initialDropVelocity(distance, game.engine.gravity.y, game.engine.gravity.scale) });
   Composite.add(game.engine.world, body);
   game.blocks.push(body);
   game.active = body;
@@ -599,10 +603,10 @@ function loop(now) {
   lastFrame = now;
   if (!game.paused && !game.over) {
     game.accumulator = Math.min(50, game.accumulator + delta);
-    while (game.accumulator >= 8.333) {
-      Engine.update(game.engine, 8.333);
+    while (game.accumulator >= PHYSICS_STEP_MS) {
+      Engine.update(game.engine, PHYSICS_STEP_MS);
       settlePiece();
-      game.accumulator -= 8.333;
+      game.accumulator -= PHYSICS_STEP_MS;
     }
     checkLoss();
     for (const particle of game.particles) {

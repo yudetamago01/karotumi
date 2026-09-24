@@ -1,5 +1,5 @@
 export function rotationIcon(direction) {
-  return `<svg class="rotate-icon${direction < 0 ? ' rotate-icon-left' : ''}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 11a9 9 0 1 1-2.9-6.6"/><path d="M21 3v8h-8"/></svg>`;
+  return `<svg class="rotate-icon${direction < 0 ? ' rotate-icon-left' : ''}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" aria-hidden="true"><path d="M5 18C3 11 7 5 15 5"/><path d="M14 1 21 5 14 9Z" fill="currentColor" stroke="none"/></svg>`;
 }
 
 /**
