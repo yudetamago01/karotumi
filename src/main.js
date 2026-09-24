@@ -2,6 +2,7 @@ import Matter from 'matter-js';
 import { createTermPicker } from './termPicker.js';
 import { splitTerm, makeTextSprite, makeTextBody } from './textBodies.js';
 import { openMultiplayer } from './multi.js';
+import { bindHoldRotation, rotationIcon } from './rotationControls.js';
 import './style.css';
 
 const { Engine, Bodies, Body, Composite, Events } = Matter;
@@ -247,6 +248,7 @@ function showSettings() {
 
 function stopGame() {
   cancelAnimationFrame(frame);
+  game?.rotationCleanup?.();
   if (game?.resizeObserver) game.resizeObserver.disconnect();
   game = null;
 }
@@ -270,8 +272,8 @@ async function startGame() {
       <button class="icon-button" id="pause-btn" aria-label="一時停止">Ⅱ</button>
     </header>
     <div class="rotation-controls" aria-label="用語の回転">
-      <button class="rotate-button" id="rotate-left" type="button" aria-label="用語を左に回転" title="左に回転（Q）">↶</button>
-      <button class="rotate-button" id="rotate-right" type="button" aria-label="用語を右に回転" title="右に回転（E）">↷</button>
+      <button class="rotate-button" id="rotate-left" type="button" aria-label="用語を左に15度回転" title="左に回転（Q）">${rotationIcon(-1)}<span class="rotate-step">15°</span></button>
+      <button class="rotate-button" id="rotate-right" type="button" aria-label="用語を右に15度回転" title="右に回転（E）"><span class="rotate-step">15°</span>${rotationIcon(1)}</button>
     </div>
     <div id="overlay-root"></div>`, 'game-screen');
   const canvas = document.querySelector('#stage');
@@ -311,8 +313,9 @@ async function startGame() {
   canvas.addEventListener('pointercancel', onPointerCancel);
   canvas.addEventListener('lostpointercapture', onPointerCancel);
   document.querySelector('#pause-btn').addEventListener('click', togglePause);
-  document.querySelector('#rotate-left').addEventListener('click', () => rotatePending(-1));
-  document.querySelector('#rotate-right').addEventListener('click', () => rotatePending(1));
+  game.rotationCleanup = bindHoldRotation(
+    document.querySelector('#rotate-left'), document.querySelector('#rotate-right'), rotatePending,
+  );
   window.addEventListener('keydown', onKeyDown);
   startMusic();
   lastFrame = performance.now();
@@ -331,7 +334,7 @@ function sizeStage() {
   canvas.width = Math.round(rect.width * dpr);
   canvas.height = Math.round(rect.height * dpr);
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-  const baseWidth = Math.min(game.width, 1300) * .7;
+  const baseWidth = Math.min(game.width, 1300) * (.7 + .24 * narrowStageFactor(game.width));
   if (!game.base) {
     game.baseWidth = baseWidth;
     game.base = Bodies.rectangle(game.width / 2, game.height - 72, baseWidth, 28, { isStatic: true, label: 'base', friction: 1.1 });
@@ -351,6 +354,9 @@ function sizeStage() {
   }
   const highest = game.blocks.reduce((y, block) => Math.min(y, block.bounds.min.y), game.base.position.y);
   game.spawnY = Math.min(185, game.base.position.y - 100, ...(game.blocks.length ? [highest - 155] : []));
+}
+function narrowStageFactor(width) {
+  return Math.max(0, Math.min(1, (800 - width) / 400));
 }
 function onPointerMove(event) {
   if (!game || game.paused || game.over) return;
@@ -573,10 +579,10 @@ function draw() {
 function updateViewScale() {
   const baseY = game.base.position.y;
   const top = Math.min(
-    game.spawnY - pendingHalfExtents(pendingSprite()).y - 12,
+    game.spawnY - pendingSprite().height / 2 - 12,
     ...game.blocks.map(block => block.bounds.min.y - 12),
   );
-  const topPadding = Math.min(110, Math.max(62, game.height * .28));
+  const topPadding = Math.max(70, Math.min(110, Math.max(62, game.height * .28)) - 25 * narrowStageFactor(game.width));
   const target = Math.min(1, Math.max(0.1, (baseY - topPadding) / Math.max(1, baseY - top)));
   game.viewScale += (target - game.viewScale) * .12;
 }

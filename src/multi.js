@@ -1,5 +1,6 @@
 import { makeTextSprite } from './textBodies.js';
 import { TERM_DEFINITIONS } from './termDefinitions.js';
+import { bindHoldRotation, rotationIcon } from './rotationControls.js';
 
 const colors = ['#087bb6', '#1466ad', '#0a91b9', '#456fbd', '#137e9e'];
 const WORLD_W = 1000;
@@ -53,6 +54,8 @@ export async function openMultiplayer(app, onHome, sfx) {
 
   function renderEntry() {
     if (model.disposed) return;
+    model.rotationCleanup?.();
+    model.rotationCleanup = null;
     if (model.onRotateKey) window.removeEventListener('keydown', model.onRotateKey);
     model.onRotateKey = null;
     model.dragPointerId = null;
@@ -273,6 +276,8 @@ export async function openMultiplayer(app, onHome, sfx) {
   }
 
   function enterRoom(room) {
+    model.rotationCleanup?.();
+    model.rotationCleanup = null;
     if (model.onRotateKey) window.removeEventListener('keydown', model.onRotateKey);
     model.onRotateKey = null;
     model.room = room;
@@ -291,7 +296,7 @@ export async function openMultiplayer(app, onHome, sfx) {
           <div class="multi-pill" id="turn-timer">—</div>
         </header>
         <canvas id="multi-stage" aria-label="みんなで積むゲーム画面"></canvas>
-        <div class="rotation-controls"><button class="rotate-button" id="multi-rotate-left" type="button" aria-label="用語を左に回転" title="左に回転（Q）">↶</button><button class="rotate-button" id="multi-rotate-right" type="button" aria-label="用語を右に回転" title="右に回転（E）">↷</button></div>
+        <div class="rotation-controls" aria-label="用語の回転"><button class="rotate-button" id="multi-rotate-left" type="button" aria-label="用語を左に15度回転" title="左に回転（Q）">${rotationIcon(-1)}<span class="rotate-step">15°</span></button><button class="rotate-button" id="multi-rotate-right" type="button" aria-label="用語を右に15度回転" title="右に回転（E）"><span class="rotate-step">15°</span>${rotationIcon(1)}</button></div>
         <div class="multi-turn"><strong id="turn-name"></strong><span id="next-term"></span><small id="drop-help"></small></div>
         <div id="winner-banner" class="winner-banner" hidden></div>
         <div id="loss-choice" class="loss-choice" hidden><strong>脱落しました</strong><button class="button primary" id="watch-btn">観戦する</button><button class="button secondary" id="exit-btn">退出する</button></div>
@@ -339,8 +344,10 @@ export async function openMultiplayer(app, onHome, sfx) {
       model.rotation = (model.rotation + delta + Math.PI * 2) % (Math.PI * 2);
       sfx('tap');
     };
-    app.querySelector('#multi-rotate-left').addEventListener('click', () => rotatePiece(-Math.PI / 12));
-    app.querySelector('#multi-rotate-right').addEventListener('click', () => rotatePiece(Math.PI / 12));
+    model.rotationCleanup = bindHoldRotation(
+      app.querySelector('#multi-rotate-left'), app.querySelector('#multi-rotate-right'),
+      direction => rotatePiece(direction * Math.PI / 12),
+    );
     const onRotateKey = event => {
       if (!app.querySelector('#multi-stage')) return;
       if (!['KeyQ', 'KeyE'].includes(event.code) || event.repeat || /INPUT|TEXTAREA|SELECT/.test(event.target?.tagName || '')) return;
@@ -468,6 +475,7 @@ export async function openMultiplayer(app, onHome, sfx) {
   return {
     destroy() {
       model.disposed = true;
+      model.rotationCleanup?.();
       if (model.onRotateKey) window.removeEventListener('keydown', model.onRotateKey);
       model.stream?.close();
       cancelAnimationFrame(model.frame);
