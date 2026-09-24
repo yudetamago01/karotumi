@@ -3,6 +3,8 @@ import Matter from 'matter-js';
 import { createTermPicker } from '../src/termPicker.js';
 import { makeCompoundTextBody } from '../src/physicsBody.js';
 import { applyDropGravity, PHYSICS_STEP_MS } from '../src/dropMotion.js';
+import { CANONICAL_SHAPES } from '../src/canonicalShapes.js';
+import { PLATE_WIDTH } from '../src/stageGeometry.js';
 
 const { Engine, Bodies, Body, Composite, Events } = Matter;
 const WORLD_WIDTH = 1000;
@@ -20,7 +22,7 @@ function makeEngine(room) {
   engine.positionIterations = 10;
   engine.velocityIterations = 10;
   engine.constraintIterations = 4;
-  const base = Bodies.rectangle(500, BASE_Y, 700, 28, { isStatic: true, label: 'base', friction: 1.1 });
+  const base = Bodies.rectangle(500, BASE_Y, PLATE_WIDTH, 28, { isStatic: true, label: 'base', friction: 1.1 });
   Composite.add(engine.world, base);
   room.engine = engine;
   room.base = base;
@@ -78,7 +80,7 @@ function hydrate(row) {
     order: data.order, turnIndex: data.turnIndex, term: data.term,
     turnDeadline: data.turnDeadline, spawnY: data.spawnY,
     winnerId: data.winnerId, pieces: [], messages: data.messages || [],
-    active: null, shape: null, listeners: new Set(), dirty: false,
+    active: null, listeners: new Set(), dirty: false,
     lastPersist: Date.now(), persistChain: Promise.resolve(), resetTimer: null,
   };
   // A free Render service can restart while nobody is connected. The physics
@@ -162,7 +164,7 @@ export async function createRoom(user, password = '') {
     members: new Map([[user.id, { id: user.id, name: user.name, avatar: user.avatar || null, status: 'playing' }]]),
     order: [user.id], turnIndex: -1, term: null, turnDeadline: 0,
     spawnY: 160, winnerId: null, pieces: [], messages: [],
-    active: null, shape: null, listeners: new Set(), dirty: true, resetTimer: null,
+    active: null, listeners: new Set(), dirty: true, resetTimer: null,
     lastPersist: 0, persistChain: Promise.resolve(),
   };
   rooms.set(id, room);
@@ -258,7 +260,6 @@ function resetToLobby(room) {
   room.winnerId = null;
   room.pieces = [];
   room.active = null;
-  room.shape = null;
   room.engine = null;
   room.base = null;
   publish(room);
@@ -281,7 +282,6 @@ function chooseTurn(room) {
     if (room.members.get(room.order[room.turnIndex])?.status === 'playing') break;
   }
   room.term = room.pickTerm();
-  room.shape = null;
   room.turnDeadline = Date.now() + TURN_MS;
   publish(room);
 }
@@ -297,27 +297,15 @@ export function startRoom(room, user) {
 }
 
 export function acceptShape(room, shape) {
-  if (room.phase !== 'playing' || room.active || shape?.term !== room.term) return false;
-  if (!Number.isFinite(shape.width) || !Number.isFinite(shape.height) ||
-    shape.width < 15 || shape.width > 540 || shape.height < 15 || shape.height > 140 ||
-    !Array.isArray(shape.rectangles) || shape.rectangles.length < 1 || shape.rectangles.length > 150) return false;
-  for (const r of shape.rectangles) {
-    if (![r.x, r.y, r.w, r.h].every(Number.isFinite) || r.w <= 0 || r.h <= 0 ||
-      r.x < 0 || r.y < 0 || r.x > shape.width || r.y > shape.height || r.w > 540 || r.h > 140) return false;
-  }
-  room.shape ||= { term: shape.term, width: shape.width, height: shape.height, rectangles: shape.rectangles };
-  return true;
+  // Older clients still send this request. Physics always uses the server's
+  // canonical glyph mask, including when a turn expires while its owner is away.
+  return room.phase === 'playing' && !room.active && shape?.term === room.term;
 }
 
-function fallbackShape(term) {
-  const width = Math.min(510, Math.max(65, [...term].length * 51));
-  return { term, width, height: 72, rectangles: [{ x: width / 2, y: 36, w: width - 8, h: 54 }] };
-}
-
-export function drop(room, userId, x, shape, angle = 0) {
+export function drop(room, userId, x, _shape, angle = 0) {
   if (room.phase !== 'playing' || room.active || room.order[room.turnIndex] !== userId) throw new Error('今はあなたの番ではありません');
-  if (shape) acceptShape(room, shape);
-  const selectedShape = room.shape || fallbackShape(room.term);
+  const selectedShape = CANONICAL_SHAPES[`t:${room.term}`] || CANONICAL_SHAPES[`e:${room.term}`];
+  if (!selectedShape) throw new Error('用語の当たり判定が見つかりません');
   const safeAngle = Number.isFinite(angle) ? Math.max(-Math.PI * 2, Math.min(Math.PI * 2, angle)) : 0;
   const halfWidth = Math.abs(Math.cos(safeAngle)) * selectedShape.width / 2 + Math.abs(Math.sin(safeAngle)) * selectedShape.height / 2;
   const requestedX = Number(x);

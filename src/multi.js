@@ -2,6 +2,7 @@ import { makeTextSprite } from './textBodies.js';
 import { TERM_DEFINITIONS } from './termDefinitions.js';
 import { bindHoldRotation, rotationIcon } from './rotationControls.js';
 import { multiStageView } from './multiStageView.js';
+import { PLATE_WIDTH, TEXT_STAGE_WIDTH } from './stageGeometry.js';
 
 const colors = ['#087bb6', '#1466ad', '#0a91b9', '#456fbd', '#137e9e'];
 const WORLD_W = 1000;
@@ -38,7 +39,7 @@ export async function openMultiplayer(app, onHome, sfx) {
   const model = {
     config: null, user: null, room: null, stream: null, frame: 0,
     disposed: false, x: 500, rotation: 0, dragPointerId: null, drawn: [], display: new Map(),
-    sprites: new Map(), lastDraw: 0, lastReconnectProbe: 0, lastShapeTerm: null, chatCount: 0, notice: '',
+    sprites: new Map(), lastDraw: 0, lastReconnectProbe: 0, lastShapeTerm: null, chatCount: 0, notice: '', dropPending: false,
     authCheckInFlight: false,
   };
 
@@ -209,19 +210,14 @@ export async function openMultiplayer(app, onHome, sfx) {
     if (room.phase === 'playing' && room.term && room.turnDeadline > 0 && room.currentPlayerId === model.user.id && model.lastShapeTerm !== shapeTurn) {
       model.rotation = 0;
       model.lastShapeTerm = shapeTurn;
-      const sprite = spriteFor(room.term);
-      api(`/api/rooms/${room.id}/shape`, shapeFor(room.term, sprite)).catch(() => {});
     }
   }
 
   function spriteFor(term) {
     if (model.sprites.has(term)) return model.sprites.get(term);
-    const sprite = makeTextSprite({ text: term, emoji: /[\p{Extended_Pictographic}\p{Emoji_Presentation}]/u.test(term) }, WORLD_W, colors[term.length % colors.length]);
+    const sprite = makeTextSprite({ text: term, emoji: /[\p{Extended_Pictographic}\p{Emoji_Presentation}]/u.test(term) }, TEXT_STAGE_WIDTH, colors[term.length % colors.length]);
     model.sprites.set(term, sprite);
     return sprite;
-  }
-  function shapeFor(term, sprite) {
-    return { term, width: sprite.width, height: sprite.height, rectangles: sprite.rectangles };
   }
 
   function gameFrame(now = performance.now()) {
@@ -254,7 +250,7 @@ export async function openMultiplayer(app, onHome, sfx) {
     ctx.strokeStyle = '#176eaa';
     ctx.lineWidth = 3;
     ctx.beginPath();
-    ctx.roundRect(wx(150), wy(636), wx(700), 28 * scale, 14 * scale);
+    ctx.roundRect(wx((WORLD_W - PLATE_WIDTH) / 2), wy(636), PLATE_WIDTH * scale, 28 * scale, 14 * scale);
     ctx.fill(); ctx.stroke();
     const room = model.room;
     const ownTurn = room.phase === 'playing' && room.currentPlayerId === model.user.id && room.turnDeadline > 0;
@@ -308,6 +304,7 @@ export async function openMultiplayer(app, onHome, sfx) {
     model.onRotateKey = null;
     model.room = room;
     model.x = 500;
+    model.dropPending = false;
     model.view = null;
     model.display.clear();
     model.lastShapeTerm = null;
@@ -377,14 +374,14 @@ export async function openMultiplayer(app, onHome, sfx) {
       memberPanel.classList.remove('open');
       memberToggle.setAttribute('aria-expanded', 'false');
     });
-    const rotatePiece = delta => {
+    const rotatePiece = (delta, repeated = false) => {
       if (model.room.currentPlayerId !== model.user.id || !model.room.turnDeadline) return;
       model.rotation = (model.rotation + delta + Math.PI * 2) % (Math.PI * 2);
-      sfx('tap');
+      if (!repeated) sfx('rotate');
     };
     model.rotationCleanup = bindHoldRotation(
       app.querySelector('#multi-rotate-left'), app.querySelector('#multi-rotate-right'),
-      direction => rotatePiece(direction * Math.PI / 12),
+      (direction, repeated) => rotatePiece(direction * Math.PI / 12, repeated),
     );
     const onRotateKey = event => {
       if (!app.querySelector('#multi-stage')) return;
@@ -400,13 +397,12 @@ export async function openMultiplayer(app, onHome, sfx) {
       model.x = Math.max(0, Math.min(WORLD_W, view.worldX(event.clientX - bounds.left)));
     };
     const dropCurrent = () => {
-      if (model.room.currentPlayerId !== model.user.id || !model.room.turnDeadline) return;
-      const term = model.room.term;
-      const sprite = spriteFor(term);
+      if (model.dropPending || model.room.currentPlayerId !== model.user.id || !model.room.turnDeadline) return;
+      model.dropPending = true;
       run(async () => {
-        model.room = (await api(`/api/rooms/${room.id}/drop`, { x: model.x, angle: model.rotation, shape: shapeFor(term, sprite) })).room;
-        renderRoomState(); sfx('drop');
-      });
+        model.room = (await api(`/api/rooms/${room.id}/drop`, { x: model.x, angle: model.rotation })).room;
+        renderRoomState(); sfx('multi-drop');
+      }).finally(() => { model.dropPending = false; });
     };
     canvas.addEventListener('pointermove', event => {
       if (event.pointerType === 'mouse' || model.dragPointerId === event.pointerId) movePointer(event);

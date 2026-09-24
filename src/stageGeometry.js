@@ -1,10 +1,10 @@
 // Keep the plate and glyph physics at the same size on every screen. Only the
 // camera scales the world to fit a narrow viewport.
 export const TEXT_STAGE_WIDTH = 1300;
-const MIN_VIEW_WIDTH = 1000;
-const MAX_DISPLAY_SCALE = .75;
-const PLATE_WIDTH = 910;
-const BOTTOM_GAP = 72;
+export const MIN_VIEW_WIDTH = 1000;
+export const MAX_DISPLAY_SCALE = .75;
+export const PLATE_WIDTH = 910;
+export const BOTTOM_GAP = 72;
 const SPAWN_TOP = 185;
 
 export function stageGeometry(cssWidth, cssHeight) {

@@ -10,13 +10,19 @@ test('holding a rotate button repeats until release and a keyboard click rotates
   left.disabled = false;
   right.disabled = false;
   const turns = [];
-  const cleanup = bindHoldRotation(left, right, direction => turns.push(direction));
+  const repeats = [];
+  const cleanup = bindHoldRotation(left, right, (direction, repeated) => {
+    turns.push(direction);
+    repeats.push(repeated);
+  });
 
   try {
     left.dispatchEvent(new Event('pointerdown'));
     assert.deepEqual(turns, [-1]);
     await new Promise(resolve => setTimeout(resolve, 600));
     assert.ok(turns.length >= 3, 'rotation repeats during a hold');
+    assert.equal(repeats[0], false);
+    assert.ok(repeats.slice(1).every(Boolean), 'held turns can stay silent');
     left.dispatchEvent(new Event('pointerup'));
     const stoppedAt = turns.length;
     await new Promise(resolve => setTimeout(resolve, 160));
@@ -26,6 +32,7 @@ test('holding a rotate button repeats until release and a keyboard click rotates
     Object.defineProperty(keyboardClick, 'detail', { value: 0 });
     right.dispatchEvent(keyboardClick);
     assert.equal(turns.at(-1), 1);
+    assert.equal(repeats.at(-1), false);
     assert.equal(turns.length, stoppedAt + 1);
 
     right.disabled = true;

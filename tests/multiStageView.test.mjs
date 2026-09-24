@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { multiStageView } from '../src/multiStageView.js';
+import { PLATE_WIDTH, stageGeometry } from '../src/stageGeometry.js';
 
 test('mobile multiplayer keeps the plate above rotation controls while the pile grows', () => {
   for (const [width, height] of [[390, 476], [320, 378]]) {
@@ -14,5 +15,15 @@ test('mobile multiplayer keeps the plate above rotation controls while the pile 
       assert.ok(Math.abs(view.worldX(view.screenX(500)) - 500) < 1e-9);
     }
     assert.ok(tallPile.scale < shortPile.scale);
+  }
+});
+
+test('multiplayer and solo use the same text and plate scale', () => {
+  for (const [width, height] of [[390, 476], [320, 378], [1600, 900]]) {
+    const multi = multiStageView(width, height);
+    const solo = stageGeometry(width, height);
+    assert.equal(multi.scale, solo.displayScale);
+    assert.equal(PLATE_WIDTH * multi.scale, PLATE_WIDTH * solo.displayScale);
+    assert.equal(multi.screenX(500), width / 2);
   }
 });

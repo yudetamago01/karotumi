@@ -48,7 +48,7 @@ export function bindHoldRotation(leftButton, rightButton, rotate) {
     const pointerId = typeof event.pointerId === 'number' ? event.pointerId : undefined;
     active = { button, direction, pointerId };
     suppressClick = { button, expiresAt: Date.now() + 1000 };
-    rotate(direction);
+    rotate(direction, false);
 
     if (pointerId !== undefined) {
       try {
@@ -69,7 +69,7 @@ export function bindHoldRotation(leftButton, rightButton, rotate) {
           stop();
           return;
         }
-        rotate(active.direction);
+        rotate(active.direction, true);
       }, repeatInterval);
     }, initialDelay);
   };
@@ -89,7 +89,7 @@ export function bindHoldRotation(leftButton, rightButton, rotate) {
       // Pointer clicks follow the immediate pointerdown rotation. detail=0 is
       // reserved for keyboard and assistive technology activation.
       if (event.detail === 0) {
-        if (!button.disabled) rotate(direction);
+        if (!button.disabled) rotate(direction, false);
         return;
       }
       if (suppressClick?.button === button && Date.now() <= suppressClick.expiresAt) {

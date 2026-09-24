@@ -23,8 +23,10 @@ let game = null;
 let frame = 0;
 let lastFrame = 0;
 let audioContext;
+let musicBus;
 let musicTimer;
 let musicStep = 0;
+let musicDuckUntil = 0;
 let multiplayer = null;
 let scoreSync = null;
 let scoreRetryTimer = null;
@@ -102,7 +104,14 @@ function tone(freq, duration, type = 'sine', gain = .08, delay = 0) {
     volume.gain.setValueAtTime(.0001, now);
     volume.gain.exponentialRampToValueAtTime(gain * settings.volume / 100, now + .012);
     volume.gain.exponentialRampToValueAtTime(.0001, now + duration);
-    oscillator.connect(volume).connect(audioContext.destination);
+    oscillator.connect(volume);
+    if (type === 'triangle') {
+      if (!musicBus) {
+        musicBus = audioContext.createGain();
+        musicBus.connect(audioContext.destination);
+      }
+      volume.connect(musicBus);
+    } else volume.connect(audioContext.destination);
     oscillator.start(now);
     oscillator.stop(now + duration + .02);
   } catch { /* Sound remains optional when the browser blocks audio. */ }
@@ -112,6 +121,20 @@ function sfx(name) {
   if (name === 'back') { tone(740, .11, 'sine', .11); tone(520, .19, 'sine', .12, .07); }
   if (name === 'exit') { tone(490, .13, 'sine', .11); tone(370, .16, 'sine', .12, .09); tone(247, .23, 'sine', .12, .19); }
   if (name === 'drop') tone(320, .13, 'sine', .10);
+  if (name === 'rotate') tone(560, .045, 'sine', .04);
+  if (name === 'multi-drop') {
+    if (settings.sound) {
+      musicDuckUntil = performance.now() + 260;
+      if (musicBus && audioContext) {
+        const now = audioContext.currentTime;
+        musicBus.gain.cancelScheduledValues(now);
+        musicBus.gain.setValueAtTime(musicBus.gain.value, now);
+        musicBus.gain.linearRampToValueAtTime(.12, now + .025);
+        musicBus.gain.linearRampToValueAtTime(1, now + .26);
+      }
+    }
+    tone(320, .09, 'sine', .065);
+  }
   if (name === 'land') { tone(250, .14, 'sine', .16); tone(390, .18, 'sine', .10, .055); }
   if (name === 'score') { tone(523, .13, 'sine', .12); tone(659, .14, 'sine', .12, .10); tone(784, .18, 'sine', .11, .20); }
   if (name === 'over') { tone(392, .18, 'sine', .12); tone(311, .25, 'sine', .13, .13); tone(196, .40, 'sine', .15, .30); }
@@ -133,8 +156,10 @@ function startMusic() {
   musicTimer = window.setInterval(() => {
     if (document.hidden || !['game', 'home', 'multi', 'settings', 'ranking', 'loading'].includes(screen) || game?.paused || game?.over) return;
     const note = melody[musicStep % melody.length];
-    if (note) tone(note, .20, 'triangle', .058);
-    if (musicStep % 4 === 0) tone(bass[Math.floor(musicStep / 4) % bass.length], .31, 'triangle', .042);
+    if (performance.now() >= musicDuckUntil) {
+      if (note) tone(note, .20, 'triangle', .058);
+      if (musicStep % 4 === 0) tone(bass[Math.floor(musicStep / 4) % bass.length], .31, 'triangle', .042);
+    }
     musicStep++;
   }, 245);
 }
@@ -440,12 +465,12 @@ function onKeyDown(event) {
   if (event.code === 'KeyE') rotatePending(1);
   if (event.code === 'Space') drop();
 }
-function rotatePending(direction) {
+function rotatePending(direction, repeated = false) {
   if (!game || game.active || game.paused || game.over) return;
   game.pendingAngle += direction * Math.PI / 12;
   if (game.pendingAngle > Math.PI) game.pendingAngle -= Math.PI * 2;
   if (game.pendingAngle < -Math.PI) game.pendingAngle += Math.PI * 2;
-  sfx('tap');
+  if (!repeated) sfx('rotate');
 }
 function setRotateEnabled(enabled) {
   for (const button of document.querySelectorAll('.game-screen .rotate-button')) button.disabled = !enabled;

@@ -1,4 +1,6 @@
-const WORLD_WIDTH = 1000;
+import { BOTTOM_GAP, MAX_DISPLAY_SCALE, MIN_VIEW_WIDTH } from './stageGeometry.js';
+
+const WORLD_WIDTH = MIN_VIEW_WIDTH;
 const WORLD_BOTTOM = 665;
 
 // Leave room for the turn label above the pile and the rotation controls
@@ -7,9 +9,9 @@ const WORLD_BOTTOM = 665;
 export function multiStageView(width, height, spawnY = 160) {
   const top = Math.min(70, spawnY - 90);
   const topInset = Math.min(100, Math.max(54, height * .23));
-  const bottomInset = Math.min(82, Math.max(62, height * .2));
+  const bottomInset = BOTTOM_GAP;
   const usableHeight = Math.max(20, height - topInset - bottomInset);
-  const scale = Math.min(width / WORLD_WIDTH, usableHeight / (WORLD_BOTTOM - top));
+  const scale = Math.min(MAX_DISPLAY_SCALE, width / WORLD_WIDTH, usableHeight / (WORLD_BOTTOM - top));
   const offsetX = (width - WORLD_WIDTH * scale) / 2;
   const offsetY = height - bottomInset - WORLD_BOTTOM * scale;
   return {
