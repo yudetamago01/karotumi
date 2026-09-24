@@ -292,7 +292,7 @@ export async function openMultiplayer(app, onHome, sfx) {
     const leaveDialog = app.querySelector('#leave-dialog');
     const requestLeave = () => { sfx('tap'); leaveDialog.hidden = false; };
     app.querySelector('#leave-btn').addEventListener('click', requestLeave);
-    app.querySelector('#cancel-leave').addEventListener('click', () => { sfx('back'); leaveDialog.hidden = true; });
+    app.querySelector('#cancel-leave').addEventListener('click', () => { sfx('exit'); leaveDialog.hidden = true; });
     app.querySelector('#confirm-leave').addEventListener('click', () => {
       sfx('exit');
       run(async () => {

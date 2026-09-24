@@ -23,6 +23,8 @@ let audioContext;
 let musicTimer;
 let musicStep = 0;
 let multiplayer = null;
+let scoreSync = null;
+let scoreRetryTimer = null;
 
 function saveSettings() { localStorage.setItem('karotter-stack-settings', JSON.stringify(settings)); }
 function escapeHtml(value) {
@@ -35,8 +37,41 @@ async function rankingApi(path, body) {
     body: body === undefined ? undefined : JSON.stringify(body),
   });
   const data = await response.json().catch(() => ({}));
-  if (!response.ok) throw new Error(data.error || `通信エラー (${response.status})`);
+  if (!response.ok) {
+    const error = new Error(data.error || `通信エラー (${response.status})`);
+    error.status = response.status;
+    throw error;
+  }
   return data;
+}
+function retryScoreSync() {
+  if (scoreRetryTimer) return;
+  scoreRetryTimer = window.setTimeout(() => {
+    scoreRetryTimer = null;
+    void syncPendingScore();
+  }, 3200);
+}
+function rememberScore(count) {
+  if (!Number.isSafeInteger(count) || count < 1) return;
+  const pending = Number(localStorage.getItem('karotter-stack-ranking-pending') || 0);
+  if (count > pending) localStorage.setItem('karotter-stack-ranking-pending', String(count));
+  void syncPendingScore();
+}
+function syncPendingScore() {
+  if (scoreSync) return scoreSync;
+  const count = Number(localStorage.getItem('karotter-stack-ranking-pending') || 0);
+  if (!Number.isSafeInteger(count) || count < 1) return Promise.resolve(null);
+  scoreSync = rankingApi('/api/ranking', { count }).then(result => {
+    const latest = Number(localStorage.getItem('karotter-stack-ranking-pending') || 0);
+    if (latest <= count) {
+      localStorage.removeItem('karotter-stack-ranking-pending');
+    } else retryScoreSync();
+    return result;
+  }).catch(error => {
+    if (error.status === 429) retryScoreSync();
+    return null;
+  }).finally(() => { scoreSync = null; });
+  return scoreSync;
 }
 
 function tone(freq, duration, type = 'sine', gain = .08, delay = 0) {
@@ -59,7 +94,6 @@ function tone(freq, duration, type = 'sine', gain = .08, delay = 0) {
 }
 function sfx(name) {
   if (name === 'tap') { tone(530, .12, 'sine', .13); tone(780, .12, 'sine', .08, .05); }
-  if (name === 'back') { tone(740, .11, 'sine', .11); tone(520, .19, 'sine', .12, .07); }
   if (name === 'exit') { tone(490, .13, 'sine', .11); tone(370, .16, 'sine', .12, .09); tone(247, .23, 'sine', .12, .19); }
   if (name === 'drop') tone(320, .13, 'sine', .10);
   if (name === 'land') { tone(250, .14, 'sine', .16); tone(390, .18, 'sine', .10, .055); }
@@ -68,8 +102,7 @@ function sfx(name) {
 }
 function stopMusic() { if (musicTimer) clearInterval(musicTimer); musicTimer = null; }
 function startMusic() {
-  stopMusic();
-  if (!settings.music) return;
+  if (!settings.music || musicTimer) return;
   const melody = [
     523, 0, 659, 784, 659, 0, 587, 523,
     440, 0, 523, 659, 587, 0, 392, 0,
@@ -82,7 +115,7 @@ function startMusic() {
   ];
   const bass = [262, 220, 196, 220, 220, 262, 294, 196, 349, 294, 262, 220, 262, 196, 220, 262];
   musicTimer = window.setInterval(() => {
-    if (document.hidden || !['game', 'home', 'multi'].includes(screen) || game?.paused || game?.over) return;
+    if (document.hidden || !['game', 'home', 'multi', 'settings', 'ranking', 'loading'].includes(screen) || game?.paused || game?.over) return;
     const note = melody[musicStep % melody.length];
     if (note) tone(note, .20, 'triangle', .058);
     if (musicStep % 4 === 0) tone(bass[Math.floor(musicStep / 4) % bass.length], .31, 'triangle', .042);
@@ -118,8 +151,8 @@ async function showRanking() {
   stopGame();
   multiplayer?.destroy();
   multiplayer = null;
-  stopMusic();
   screen = 'ranking';
+  startMusic();
   shell(`<section class="ranking-panel">
     <button class="icon-button ranking-back" id="ranking-back" aria-label="ホームへ戻る">←</button>
     <h1>個数ランキング</h1>
@@ -128,7 +161,7 @@ async function showRanking() {
     <p id="ranking-notice" class="ranking-notice" role="status">読み込み中…</p>
     <ol id="ranking-list" class="ranking-list"></ol>
   </section>`, 'ranking-screen');
-  document.querySelector('#ranking-back').addEventListener('click', () => { sfx('back'); home(); });
+  document.querySelector('#ranking-back').addEventListener('click', () => { sfx('exit'); home(); });
   const notice = document.querySelector('#ranking-notice');
   const login = document.querySelector('#ranking-login');
   const renderLogin = (user, config) => {
@@ -153,39 +186,34 @@ async function showRanking() {
     ]);
     if (screen !== 'ranking') return;
     renderLogin(data.user || me.user, config);
-    const scores = Array.isArray(data.scores) ? data.scores.slice(0, 20) : [];
+    const synced = data.user || me.user ? await syncPendingScore() : null;
+    if (screen !== 'ranking') return;
+    const scoreData = synced?.updated ? await rankingApi('/api/ranking') : data;
+    if (screen !== 'ranking') return;
+    const scores = Array.isArray(scoreData.scores) ? scoreData.scores.slice(0, 20) : [];
     document.querySelector('#ranking-list').innerHTML = scores.length
       ? scores.map((score, index) => `<li><span class="ranking-place">${index + 1}</span>${score.avatar ? `<img src="${escapeHtml(score.avatar)}" alt="" loading="lazy" referrerpolicy="no-referrer">` : ''}<span class="ranking-name">${escapeHtml(score.name)}</span><strong>${Number(score.bestCount) || 0}<small>こ</small></strong></li>`).join('')
       : '<li class="ranking-empty">まだ記録がありません</li>';
     notice.textContent = '';
-    const pending = Number(localStorage.getItem('karotter-stack-ranking-pending') || 0);
-    if (pending > 0 && (data.user || me.user)) {
-      const result = await rankingApi('/api/ranking', { count: pending });
-      localStorage.removeItem('karotter-stack-ranking-pending');
-      notice.textContent = `${pending}こを記録しました（自己ベスト ${result.bestCount}こ）`;
-      const refreshed = await rankingApi('/api/ranking');
-      document.querySelector('#ranking-list').innerHTML = (refreshed.scores || []).slice(0, 20).map((score, index) => `<li><span class="ranking-place">${index + 1}</span>${score.avatar ? `<img src="${escapeHtml(score.avatar)}" alt="" loading="lazy" referrerpolicy="no-referrer">` : ''}<span class="ranking-name">${escapeHtml(score.name)}</span><strong>${Number(score.bestCount) || 0}<small>こ</small></strong></li>`).join('') || '<li class="ranking-empty">まだ記録がありません</li>';
-    }
   } catch (error) {
     if (screen === 'ranking') notice.textContent = `${error.message}。サーバーに接続できません。`;
   }
-  if (screen === 'ranking') startMusic();
 }
 async function showMultiplayer() {
   stopGame();
   screen = 'multi';
+  startMusic();
   const instance = await openMultiplayer(app, () => {
-    sfx('back');
+    sfx('exit');
     history.replaceState(null, '', '/');
     home();
   }, sfx);
   if (screen !== 'multi') { instance.destroy(); return; }
   multiplayer = instance;
-  startMusic();
 }
 function showSettings() {
   screen = 'settings';
-  stopMusic();
+  startMusic();
   shell(`<section class="settings-panel">
     <button class="icon-button settings-back" id="back-btn" aria-label="戻る">←</button>
     <h1>設定</h1>
@@ -194,7 +222,7 @@ function showSettings() {
     <div class="setting-row"><span>音量</span><div class="volume-control"><input id="volume-range" type="range" min="0" max="100" value="${settings.volume}" aria-label="音量"><output id="volume-value">${settings.volume}%</output></div></div>
     <a class="reference" href="https://karotter-wiki.vercel.app/index/index.html" target="_blank" rel="noopener noreferrer">参考サイト：カロッター用語辞典 ↗</a>
   </section>`, 'settings-screen');
-  document.querySelector('#back-btn').addEventListener('click', () => { sfx('back'); home(); });
+  document.querySelector('#back-btn').addEventListener('click', () => { sfx('exit'); home(); });
   document.querySelector('#music-toggle').addEventListener('click', e => {
     settings.music = !settings.music;
     e.currentTarget.classList.toggle('on', settings.music);
@@ -415,26 +443,15 @@ function gameOver() {
   game.over = true;
   sfx('over');
   stopMusic();
+  rememberScore(game.score);
   document.querySelector('#overlay-root').innerHTML = `<div class="overlay"><section class="modal">
     <h2>ゲームオーバー</h2><p class="result">${game.score}<span>こ</span></p>
     <p class="modal-best">ベスト ${best}</p>
-    <button class="button primary" id="record-score-btn" ${game.score > 0 ? '' : 'hidden'}>ランキングに記録</button>
     <button class="button primary" id="again-btn">もういちど</button>
     <button class="button secondary" id="end-home-btn">ホームへ</button>
   </section></div>`;
-  document.querySelector('#record-score-btn').addEventListener('click', async event => {
-    const button = event.currentTarget;
-    button.disabled = true;
-    button.textContent = '記録中…';
-    localStorage.setItem('karotter-stack-ranking-pending', String(game.score));
-    try {
-      await rankingApi('/api/ranking', { count: game.score });
-      localStorage.removeItem('karotter-stack-ranking-pending');
-    } catch { /* Keep the score through the login redirect so it can be submitted afterward. */ }
-    await showRanking();
-  });
   document.querySelector('#again-btn').addEventListener('click', () => { sfx('tap'); startGame(); });
-  document.querySelector('#end-home-btn').addEventListener('click', () => { sfx('back'); home(); });
+  document.querySelector('#end-home-btn').addEventListener('click', () => { sfx('exit'); home(); });
 }
 function togglePause() {
   if (!game || game.over) return;
@@ -450,7 +467,7 @@ function togglePause() {
   </section></div>`;
   document.querySelector('#resume-btn').addEventListener('click', togglePause);
   document.querySelector('#restart-btn').addEventListener('click', () => { sfx('tap'); startGame(); });
-  document.querySelector('#pause-home-btn').addEventListener('click', () => { sfx('back'); home(); });
+  document.querySelector('#pause-home-btn').addEventListener('click', () => { sfx('exit'); home(); });
 }
 function burst(x, y, count) {
   if (!game) return;

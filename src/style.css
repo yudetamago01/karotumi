@@ -292,6 +292,7 @@ button:focus-visible, a:focus-visible, input:focus-visible {
 .member-group li { display: inline-flex; align-items: center; gap: 5px; padding: 3px 8px 3px 4px; border-radius: 9px; background: #fff; font-size: 12px; font-weight: 800; }
 .member-group li.current { background: #0e91c7; color: #fff; }
 .avatar { display: inline-grid; place-items: center; flex: 0 0 auto; width: 24px; height: 24px; border-radius: 50%; object-fit: cover; background: #8dd7ee; color: #075988; font-size: 12px; font-weight: 900; }
+.member-avatar, .chat-avatar { display: inline-grid; place-items: center; flex: 0 0 auto; overflow: hidden; border-radius: 50%; object-fit: cover; background: #8dd7ee; color: #075988; font-weight: 900; }
 .member-avatar { width: 21px; height: 21px; }
 .multi-start { width: 100%; min-width: 0; min-height: 50px; font-size: 17px; }
 .multi-start:disabled { opacity: .5; cursor: not-allowed; }
