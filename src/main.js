@@ -3,6 +3,7 @@ import { createTermPicker } from './termPicker.js';
 import { splitTerm, makeTextSprite, makeTextBody } from './textBodies.js';
 import { openMultiplayer } from './multi.js';
 import { bindHoldRotation, rotationIcon } from './rotationControls.js';
+import { stageGeometry, TEXT_STAGE_WIDTH } from './stageGeometry.js';
 import './style.css';
 
 const { Engine, Bodies, Body, Composite, Events } = Matter;
@@ -285,7 +286,7 @@ async function startGame() {
     canvas, ctx: canvas.getContext('2d'), engine, blocks: [], active: null,
     queue: [], pickTerm: createTermPicker(), pending: null, next: null, score: 0, paused: false, over: false,
     dragPointerId: null, pendingAngle: 0,
-    viewScale: 1, targetX: 0, width: 0, height: 0, spawnY: 185,
+    viewScale: 1, displayScale: 1, targetX: 0, width: 0, height: 0, spawnY: 185, spawnTop: 185, topPadding: 110,
     base: null, baseWidth: 0, particles: [], resizeObserver: null, accumulator: 0,
     landing: false, landingTicks: 0, stableTicks: 0,
   };
@@ -328,24 +329,28 @@ function sizeStage() {
   if (!rect.width || !rect.height) return;
   const oldWidth = game.width;
   const oldBaseY = game.base?.position.y;
-  game.width = rect.width;
-  game.height = rect.height;
+  const geometry = stageGeometry(rect.width, rect.height);
+  game.displayScale = geometry.displayScale;
+  game.width = geometry.width;
+  game.height = geometry.height;
+  game.spawnTop = geometry.spawnTop;
+  game.topPadding = geometry.topPadding;
   const dpr = Math.min(window.devicePixelRatio || 1, 2);
   canvas.width = Math.round(rect.width * dpr);
   canvas.height = Math.round(rect.height * dpr);
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-  const baseWidth = Math.min(game.width, 1300) * (.7 + .24 * narrowStageFactor(game.width));
+  const baseWidth = geometry.baseWidth;
   if (!game.base) {
     game.baseWidth = baseWidth;
-    game.base = Bodies.rectangle(game.width / 2, game.height - 72, baseWidth, 28, { isStatic: true, label: 'base', friction: 1.1 });
+    game.base = Bodies.rectangle(game.width / 2, geometry.baseY, baseWidth, 28, { isStatic: true, label: 'base', friction: 1.1 });
     Composite.add(engine.world, game.base);
     game.targetX = game.width / 2;
   } else {
     const shift = (game.width - oldWidth) / 2;
-    const rise = game.height - 72 - oldBaseY;
+    const rise = geometry.baseY - oldBaseY;
     if (game.baseWidth !== baseWidth) Body.scale(game.base, baseWidth / game.baseWidth, 1);
     game.baseWidth = baseWidth;
-    Body.setPosition(game.base, { x: game.width / 2, y: game.height - 72 });
+    Body.setPosition(game.base, { x: game.width / 2, y: geometry.baseY });
     if (Math.abs(shift) > 1 || Math.abs(rise) > 1) {
       for (const block of game.blocks) Body.setPosition(block, { x: block.position.x + shift, y: block.position.y + rise });
       for (const particle of game.particles) { particle.x += shift; particle.y += rise; }
@@ -353,10 +358,7 @@ function sizeStage() {
     }
   }
   const highest = game.blocks.reduce((y, block) => Math.min(y, block.bounds.min.y), game.base.position.y);
-  game.spawnY = Math.min(185, game.base.position.y - 100, ...(game.blocks.length ? [highest - 155] : []));
-}
-function narrowStageFactor(width) {
-  return Math.max(0, Math.min(1, (800 - width) / 400));
+  game.spawnY = Math.min(game.spawnTop, game.base.position.y - 100, ...(game.blocks.length ? [highest - 155] : []));
 }
 function onPointerMove(event) {
   if (!game || game.paused || game.over) return;
@@ -364,7 +366,8 @@ function onPointerMove(event) {
   const rect = game.canvas.getBoundingClientRect();
   const scale = game.viewScale;
   const offsetX = game.width * (1 - scale) / 2;
-  game.targetX = Math.max(20, Math.min(game.width - 20, (event.clientX - rect.left - offsetX) / scale));
+  const worldX = (event.clientX - rect.left) / game.displayScale;
+  game.targetX = Math.max(20, Math.min(game.width - 20, (worldX - offsetX) / scale));
 }
 function onPointerDown(event) {
   if (!game || game.active || game.paused || game.over) return;
@@ -425,7 +428,7 @@ function spawnPosition() {
   return game.spawnY;
 }
 function pendingSprite() {
-  return makeTextSprite(game.pending, game.width, inks[game.blocks.length % inks.length]);
+  return makeTextSprite(game.pending, TEXT_STAGE_WIDTH, inks[game.blocks.length % inks.length]);
 }
 function drop() {
   if (!game || game.active || game.paused || game.over) return;
@@ -466,15 +469,17 @@ function settlePiece() {
   game.active = null;
   setRotateEnabled(true);
   const highest = game.blocks.reduce((y, block) => Math.min(y, block.bounds.min.y), game.base.position.y);
-  game.spawnY = Math.min(185, highest - 155);
+  game.spawnY = Math.min(game.spawnTop, highest - 155);
   game.pending = game.next;
   game.next = dequeuePiece();
   document.querySelector('#next-word').textContent = game.next.text;
 }
 function checkLoss() {
   if (!game || game.over) return;
+  const leftLimit = game.base.bounds.min.x - 120;
+  const rightLimit = game.base.bounds.max.x + 120;
   for (const body of game.blocks) {
-    if (body.position.y > game.base.position.y + 95 || body.bounds.max.x < -10 || body.bounds.min.x > game.width + 10) {
+    if (body.position.y > game.base.position.y + 95 || body.bounds.max.x < leftLimit || body.bounds.min.x > rightLimit) {
       gameOver();
       break;
     }
@@ -534,6 +539,8 @@ function drawSprite(ctx, sprite, x, y, angle = 0, alpha = 1, offsetX = 0, offset
 function draw() {
   if (!game) return;
   const { ctx, width: W, height: H, base } = game;
+  ctx.save();
+  ctx.scale(game.displayScale, game.displayScale);
   ctx.clearRect(0, 0, W, H);
   ctx.fillStyle = '#dff6ff';
   ctx.fillRect(0, 0, W, H);
@@ -575,6 +582,7 @@ function draw() {
   }
   ctx.globalAlpha = 1;
   ctx.restore();
+  ctx.restore();
 }
 function updateViewScale() {
   const baseY = game.base.position.y;
@@ -582,8 +590,7 @@ function updateViewScale() {
     game.spawnY - pendingSprite().height / 2 - 12,
     ...game.blocks.map(block => block.bounds.min.y - 12),
   );
-  const topPadding = Math.max(70, Math.min(110, Math.max(62, game.height * .28)) - 25 * narrowStageFactor(game.width));
-  const target = Math.min(1, Math.max(0.1, (baseY - topPadding) / Math.max(1, baseY - top)));
+  const target = Math.min(1, Math.max(0.1, (baseY - game.topPadding) / Math.max(1, baseY - top)));
   game.viewScale += (target - game.viewScale) * .12;
 }
 function loop(now) {
