@@ -245,7 +245,7 @@ button:focus-visible, a:focus-visible, input:focus-visible {
 .multi-entry { background: #b8e9fb; }
 .multi-home { position: absolute; top: 20px; left: 20px; z-index: 2; }
 .multi-entry-center { width: min(840px, calc(100% - 36px)); max-height: 100%; overflow: auto; margin: auto; padding: 55px 0; text-align: center; }
-.multi-entry-center h1 { margin: 0 0 24px; font-size: clamp(36px, 6vw, 68px); line-height: 1.15; color: #086b9e; text-shadow: 3px 4px #fff9; }
+.multi-entry-center h1 { margin: 0 0 24px; color: #086b9e; font-size: clamp(43px, 7vw, 88px); font-weight: 900; letter-spacing: -.055em; line-height: 1.25; white-space: nowrap; text-shadow: 4px 5px 0 #ffffffbb; }
 .multi-user { margin-bottom: 20px; font-weight: 900; }
 .multi-forms { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px; }
 .multi-card { display: flex; flex-direction: column; gap: 17px; padding: 27px; border: 2px solid #3cadd9; border-radius: 23px; background: #f8fdff; text-align: left; box-shadow: 5px 6px 0 #72c7e8; }

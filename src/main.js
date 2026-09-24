@@ -59,6 +59,8 @@ function tone(freq, duration, type = 'sine', gain = .08, delay = 0) {
 }
 function sfx(name) {
   if (name === 'tap') { tone(530, .12, 'sine', .13); tone(780, .12, 'sine', .08, .05); }
+  if (name === 'back') { tone(740, .11, 'sine', .11); tone(520, .19, 'sine', .12, .07); }
+  if (name === 'exit') { tone(490, .13, 'sine', .11); tone(370, .16, 'sine', .12, .09); tone(247, .23, 'sine', .12, .19); }
   if (name === 'drop') tone(320, .13, 'sine', .10);
   if (name === 'land') { tone(250, .14, 'sine', .16); tone(390, .18, 'sine', .10, .055); }
   if (name === 'score') { tone(523, .13, 'sine', .12); tone(659, .14, 'sine', .12, .10); tone(784, .18, 'sine', .11, .20); }
@@ -126,7 +128,7 @@ async function showRanking() {
     <p id="ranking-notice" class="ranking-notice" role="status">読み込み中…</p>
     <ol id="ranking-list" class="ranking-list"></ol>
   </section>`, 'ranking-screen');
-  document.querySelector('#ranking-back').addEventListener('click', home);
+  document.querySelector('#ranking-back').addEventListener('click', () => { sfx('back'); home(); });
   const notice = document.querySelector('#ranking-notice');
   const login = document.querySelector('#ranking-login');
   const renderLogin = (user, config) => {
@@ -173,6 +175,7 @@ async function showMultiplayer() {
   stopGame();
   screen = 'multi';
   const instance = await openMultiplayer(app, () => {
+    sfx('back');
     history.replaceState(null, '', '/');
     home();
   }, sfx);
@@ -191,7 +194,7 @@ function showSettings() {
     <div class="setting-row"><span>音量</span><div class="volume-control"><input id="volume-range" type="range" min="0" max="100" value="${settings.volume}" aria-label="音量"><output id="volume-value">${settings.volume}%</output></div></div>
     <a class="reference" href="https://karotter-wiki.vercel.app/index/index.html" target="_blank" rel="noopener noreferrer">参考サイト：カロッター用語辞典 ↗</a>
   </section>`, 'settings-screen');
-  document.querySelector('#back-btn').addEventListener('click', () => { sfx('tap'); home(); });
+  document.querySelector('#back-btn').addEventListener('click', () => { sfx('back'); home(); });
   document.querySelector('#music-toggle').addEventListener('click', e => {
     settings.music = !settings.music;
     e.currentTarget.classList.toggle('on', settings.music);
@@ -230,7 +233,6 @@ async function startGame() {
   screen = 'game';
   shell(`<canvas id="stage" aria-label="用語を積み上げるゲーム画面"></canvas>
     <header class="game-hud">
-      <button class="icon-button" id="home-btn" aria-label="ホームへ戻る">←</button>
       <div class="stats">
         <div class="stat"><span>つんだ数</span><strong id="score">0</strong></div>
         <div class="stat"><span>次の用語</span><strong id="next-word"></strong></div>
@@ -275,7 +277,6 @@ async function startGame() {
   canvas.addEventListener('pointerup', onPointerUp);
   canvas.addEventListener('pointercancel', onPointerCancel);
   canvas.addEventListener('lostpointercapture', onPointerCancel);
-  document.querySelector('#home-btn').addEventListener('click', () => { sfx('tap'); home(); });
   document.querySelector('#pause-btn').addEventListener('click', togglePause);
   window.addEventListener('keydown', onKeyDown);
   startMusic();
@@ -433,7 +434,7 @@ function gameOver() {
     await showRanking();
   });
   document.querySelector('#again-btn').addEventListener('click', () => { sfx('tap'); startGame(); });
-  document.querySelector('#end-home-btn').addEventListener('click', () => { sfx('tap'); home(); });
+  document.querySelector('#end-home-btn').addEventListener('click', () => { sfx('back'); home(); });
 }
 function togglePause() {
   if (!game || game.over) return;
@@ -445,9 +446,11 @@ function togglePause() {
     <h2>一時停止</h2>
     <button class="button primary" id="resume-btn">つづける</button>
     <button class="button secondary" id="restart-btn">はじめから</button>
+    <button class="button secondary" id="pause-home-btn">ホームへ</button>
   </section></div>`;
   document.querySelector('#resume-btn').addEventListener('click', togglePause);
   document.querySelector('#restart-btn').addEventListener('click', () => { sfx('tap'); startGame(); });
+  document.querySelector('#pause-home-btn').addEventListener('click', () => { sfx('back'); home(); });
 }
 function burst(x, y, count) {
   if (!game) return;

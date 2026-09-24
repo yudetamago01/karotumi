@@ -88,11 +88,14 @@ export async function openMultiplayer(app, onHome, sfx) {
       <section class="multi-entry-center"><h1>みんなで積む</h1>${auth}<p id="multi-notice" class="multi-notice" role="status">${escapeHtml(model.notice)}</p></section>
     </main>`;
     app.querySelector('#multi-home').addEventListener('click', onHome);
-    app.querySelector('#logout-btn')?.addEventListener('click', () => run(async () => {
-      await api('/auth/logout', {});
-      model.user = null;
-      renderEntry();
-    }));
+    app.querySelector('#logout-btn')?.addEventListener('click', () => {
+      sfx('exit');
+      run(async () => {
+        await api('/auth/logout', {});
+        model.user = null;
+        renderEntry();
+      });
+    });
     app.querySelector('#dev-login-form')?.addEventListener('submit', event => {
       event.preventDefault();
       run(async () => {
@@ -287,17 +290,20 @@ export async function openMultiplayer(app, onHome, sfx) {
       <div id="leave-dialog" class="term-dialog" hidden><section class="leave-confirm"><h2>ルームから退出しますか？</h2><p>参加中のルームから退出します。</p><div><button id="cancel-leave" class="button secondary">キャンセル</button><button id="confirm-leave" class="button primary">退出する</button></div></section></div>
     </main>`;
     const leaveDialog = app.querySelector('#leave-dialog');
-    const requestLeave = () => { leaveDialog.hidden = false; };
+    const requestLeave = () => { sfx('tap'); leaveDialog.hidden = false; };
     app.querySelector('#leave-btn').addEventListener('click', requestLeave);
-    app.querySelector('#cancel-leave').addEventListener('click', () => { leaveDialog.hidden = true; });
-    app.querySelector('#confirm-leave').addEventListener('click', () => run(async () => {
-      await api(`/api/rooms/${room.id}/leave`, {});
-      leaveDialog.hidden = true;
-      history.replaceState(null, '', '/');
-      renderEntry();
-    }));
+    app.querySelector('#cancel-leave').addEventListener('click', () => { sfx('back'); leaveDialog.hidden = true; });
+    app.querySelector('#confirm-leave').addEventListener('click', () => {
+      sfx('exit');
+      run(async () => {
+        await api(`/api/rooms/${room.id}/leave`, {});
+        leaveDialog.hidden = true;
+        history.replaceState(null, '', '/');
+        renderEntry();
+      });
+    });
     app.querySelector('#copy-id').addEventListener('click', () => navigator.clipboard.writeText(room.id).then(() => showError('ルームIDをコピーしました')).catch(() => showError('コピーできませんでした')));
-    app.querySelector('#start-room').addEventListener('click', () => run(async () => { model.room = (await api(`/api/rooms/${room.id}/start`, {})).room; renderRoomState(); sfx('tap'); }));
+    app.querySelector('#start-room').addEventListener('click', () => { sfx('tap'); run(async () => { model.room = (await api(`/api/rooms/${room.id}/start`, {})).room; renderRoomState(); }); });
     app.querySelector('#watch-btn').addEventListener('click', () => run(async () => { model.room = (await api(`/api/rooms/${room.id}/choice`, { choice: 'watching' })).room; renderRoomState(); }));
     app.querySelector('#exit-btn').addEventListener('click', requestLeave);
     app.querySelector('#chat-form').addEventListener('submit', event => {
