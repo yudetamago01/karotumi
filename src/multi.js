@@ -3,7 +3,7 @@ import { TERM_DEFINITIONS } from './termDefinitions.js';
 import { bindHoldRotation, rotationIcon } from './rotationControls.js';
 import { multiStageView } from './multiStageView.js';
 import { TEXT_STAGE_WIDTH, stageGeometry } from './stageGeometry.js';
-import { MultiPhysicsView } from './multiPhysicsView.js';
+import { MultiPhysicsClient } from './multiPhysicsClient.js';
 
 const colors = ['#087bb6', '#1466ad', '#0a91b9', '#456fbd', '#137e9e'];
 const API_ORIGIN = import.meta.env.VITE_API_ORIGIN || (import.meta.env.DEV ? 'http://127.0.0.1:3001' : '');
@@ -39,8 +39,8 @@ export async function openMultiplayer(app, onHome, sfx) {
   const model = {
     config: null, user: null, room: null, stream: null, frame: 0,
     disposed: false, x: 500, rotation: 0, dragPointerId: null, drawn: [], visual: null,
-    sprites: new Map(), lastReconnectProbe: 0, lastShapeTerm: null, chatCount: 0, notice: '', dropPending: false,
-    authCheckInFlight: false, cameraScale: null, cameraSize: '',
+    sprites: new Map(), lastReconnectProbe: 0, lastShapeTerm: null, chatCount: 0, notice: '', dropPending: false, lastTimer: '',
+    authCheckInFlight: false, cameraScale: null, cameraSize: '', wasHidden: false,
   };
 
   const showError = message => {
@@ -73,7 +73,17 @@ export async function openMultiplayer(app, onHome, sfx) {
     finally { model.authCheckInFlight = false; }
   }
 
-  const onAuthReturn = () => { if (!document.hidden) void refreshAuth(); };
+  const onAuthReturn = () => {
+    if (document.hidden) { model.wasHidden = true; return; }
+    if (model.wasHidden && model.room && app.querySelector('#multi-stage')) {
+      model.wasHidden = false;
+      api(`/api/rooms/${model.room.id}`).then(({ room }) => {
+        if (model.disposed || !app.querySelector('#multi-stage')) return;
+        setRoom(room, true);
+        renderRoomState();
+      }).catch(error => showError(error.message));
+    } else void refreshAuth();
+  };
   window.addEventListener('pageshow', onAuthReturn);
   window.addEventListener('focus', onAuthReturn);
   document.addEventListener('visibilitychange', onAuthReturn);
@@ -87,6 +97,8 @@ export async function openMultiplayer(app, onHome, sfx) {
     model.dragPointerId = null;
     model.stream?.close();
     model.stream = null;
+    model.visual?.dispose();
+    model.visual = null;
     cancelAnimationFrame(model.frame);
     const invitationId = new URLSearchParams(location.search).get('room') || '';
     const auth = model.user ? `
@@ -221,12 +233,13 @@ export async function openMultiplayer(app, onHome, sfx) {
     return sprite;
   }
 
-  function setRoom(next) {
+  function setRoom(next, resetVisual = false) {
     const matchStarting = model.room?.phase === 'lobby' && next.phase === 'playing';
     model.room = next;
     const geometry = next.geometry;
-    if (geometry && (!model.visual || model.visual.geometry.width !== geometry.width || model.visual.geometry.height !== geometry.height)) {
-      model.visual = new MultiPhysicsView(geometry);
+    if (geometry && (resetVisual || !model.visual || model.visual.geometry.width !== geometry.width || model.visual.geometry.height !== geometry.height)) {
+      model.visual?.dispose();
+      model.visual = new MultiPhysicsClient(geometry);
     }
     model.visual?.sync(next);
     if (matchStarting && window.innerWidth <= 650) {
@@ -235,9 +248,8 @@ export async function openMultiplayer(app, onHome, sfx) {
     }
   }
 
-  function gameFrame(now = performance.now()) {
+  function gameFrame() {
     if (model.disposed || !model.room || !app.querySelector('#multi-stage')) return;
-    model.visual?.step(now);
     const canvas = app.querySelector('#multi-stage');
     const ctx = canvas.getContext('2d');
     const rect = canvas.getBoundingClientRect();
@@ -306,7 +318,11 @@ export async function openMultiplayer(app, onHome, sfx) {
       });
     }
     const timer = app.querySelector('#turn-timer');
-    if (timer) timer.textContent = room.turnDeadline ? `${Math.max(0, Math.ceil((room.turnDeadline - Date.now()) / 1000))}秒` : '—';
+    const timerText = room.turnDeadline ? `${Math.max(0, Math.ceil((room.turnDeadline - Date.now()) / 1000))}秒` : '—';
+    if (timer && timerText !== model.lastTimer) {
+      timer.textContent = timerText;
+      model.lastTimer = timerText;
+    }
     model.frame = requestAnimationFrame(gameFrame);
   }
 
@@ -320,6 +336,7 @@ export async function openMultiplayer(app, onHome, sfx) {
     model.dropPending = false;
     model.view = null;
     model.cameraScale = null;
+    model.lastTimer = '';
     model.lastShapeTerm = null;
     model.chatCount = 0;
     model.stream?.close();
@@ -502,14 +519,6 @@ export async function openMultiplayer(app, onHome, sfx) {
       model.room.messages = model.room.messages.slice(-50);
       renderMessages();
     });
-    model.stream.addEventListener('tick', event => {
-      if (model.disposed || !model.room) return;
-      const tick = JSON.parse(event.data);
-      for (const [index, x, y, angle] of tick.pieces) {
-        const piece = model.room.pieces[index];
-        if (piece) Object.assign(piece, { x, y, angle });
-      }
-    });
     model.stream.onerror = () => {
       showError('再接続しています…');
       if (Date.now() - model.lastReconnectProbe < 3000) return;
@@ -554,6 +563,7 @@ export async function openMultiplayer(app, onHome, sfx) {
       model.rotationCleanup?.();
       if (model.onRotateKey) window.removeEventListener('keydown', model.onRotateKey);
       model.stream?.close();
+      model.visual?.dispose();
       cancelAnimationFrame(model.frame);
       if (location.search.includes('room=')) history.replaceState(null, '', '/');
     },

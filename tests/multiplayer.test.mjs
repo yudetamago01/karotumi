@@ -71,14 +71,15 @@ test('two players join, start, chat, and receive room events', async () => {
   const dropped = await request(`/api/rooms/${id}/drop`, { method: 'POST', headers: { Cookie: currentCookie }, body: JSON.stringify({ x: 500 }) });
   assert.equal(dropped.response.status, 200);
   let updates = '';
-  for (let i = 0; i < 12 && !updates.includes('event: tick'); i++) {
+  for (let i = 0; i < 12 && !updates.includes('"activeId"'); i++) {
     const chunk = await Promise.race([
       reader.read(),
-      new Promise((_, reject) => setTimeout(() => reject(new Error('tick timeout')), 3000)),
+      new Promise((_, reject) => setTimeout(() => reject(new Error('state timeout')), 3000)),
     ]);
     updates += new TextDecoder().decode(chunk.value);
   }
-  assert.match(updates, /event: tick\ndata: \{"pieces":\[\[\d+,/);
+  assert.match(updates, /event: state\ndata: \{/);
+  assert.match(updates, /"activeId":"[^"]+"/);
   assert.doesNotMatch(updates, /"shape":/);
   controller.abort();
 

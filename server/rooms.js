@@ -54,7 +54,7 @@ function serialize(room) {
     pieces: room.pieces.map(p => ({
       id: p.id, term: p.term, ownerId: p.ownerId,
       x: p.body.position.x, y: p.body.position.y, angle: p.body.angle,
-      vx: p.body.velocity.x, vy: p.body.velocity.y, va: p.body.angularVelocity,
+      vx: p.body.velocity.x, vy: p.body.velocity.y, va: p.body.angularVelocity, sleeping: p.body.isSleeping,
       offsetX: p.offsetX, offsetY: p.offsetY,
     })),
     messages: room.messages.slice(-50),
@@ -211,23 +211,6 @@ export function subscribe(room, response) {
   room.listeners.add(response);
   response.write(`event: state\ndata: ${JSON.stringify(publicState(room, null))}\n\n`);
   response.on('close', () => room.listeners.delete(response));
-}
-
-function broadcastTick(room, activeOnly = false) {
-  const pieces = room.pieces.flatMap((p, index) => p.body.isSleeping || (activeOnly && p !== room.active) ? [] : [[
-    index,
-    Math.round(p.body.position.x * 10) / 10,
-    Math.round(p.body.position.y * 10) / 10,
-    Math.round(p.body.angle * 1000) / 1000,
-  ]]);
-  if (!pieces.length) return;
-  const payload = `event: tick\ndata: ${JSON.stringify({
-    pieces,
-  })}\n\n`;
-  for (const response of room.listeners) {
-    try { response.write(payload); }
-    catch { room.listeners.delete(response); }
-  }
 }
 
 function finishIfOne(room) {
@@ -424,9 +407,9 @@ function checkLoss(room) {
 
 export function advanceRoomPhysics(room, now = performance.now()) {
   if (room.phase !== 'playing') return;
-  const delta = Math.min(40, Math.max(0, now - (room.physicsTime ?? now)));
+  const delta = Math.min(80, Math.max(0, now - (room.physicsTime ?? now)));
   room.physicsTime = now;
-  room.physicsAccumulator = Math.min(50, (room.physicsAccumulator || 0) + delta);
+  room.physicsAccumulator = Math.min(100, (room.physicsAccumulator || 0) + delta);
   while (room.phase === 'playing' && room.physicsAccumulator >= PHYSICS_STEP_MS) {
     stepPhysics(room);
     room.physicsAccumulator -= PHYSICS_STEP_MS;
@@ -439,15 +422,6 @@ setInterval(() => {
     try {
       if (room.phase === 'playing') {
         advanceRoomPhysics(room);
-        const now = Date.now();
-        if (room.listeners.size && now - (room.lastBroadcast || 0) >= 500) {
-          room.lastBroadcast = now;
-          room.lastActiveBroadcast = now;
-          broadcastTick(room);
-        } else if (room.listeners.size && room.active && now - (room.lastActiveBroadcast || 0) >= 200) {
-          room.lastActiveBroadcast = now;
-          broadcastTick(room, true);
-        }
       }
       if (room.dirty && Date.now() - (room.lastPersistAttempt || 0) > 5000) {
         persist(room).catch(error => console.error('Room persistence:', error.message));

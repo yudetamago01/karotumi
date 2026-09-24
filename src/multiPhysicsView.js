@@ -3,7 +3,7 @@ import { CANONICAL_SHAPES } from './canonicalShapes.js';
 import { applyDropGravity, PHYSICS_STEP_MS } from './dropMotion.js';
 import { makeCompoundTextBody } from './physicsBody.js';
 
-const { Engine, Bodies, Body, Composite, Events } = Matter;
+const { Engine, Bodies, Body, Composite, Events, Sleeping } = Matter;
 
 // The server decides turns and losses. This matching Matter world only draws
 // the motion locally, so a word does not jump between delayed network frames.
@@ -55,17 +55,18 @@ export class MultiPhysicsView {
       Body.setVelocity(body, { x: piece.vx, y: piece.vy });
       Body.setAngularVelocity(body, piece.va || 0);
     }
+    if (piece.sleeping) Sleeping.set(body, true);
     Composite.add(this.engine.world, body);
     this.pieces.set(piece.id, { ...piece, x: body.position.x, y: body.position.y, offsetX, offsetY, body });
     return this.pieces.get(piece.id);
   }
 
-  predict(term, ownerId, x, y, angle) {
+  predict(term, ownerId, x, y, angle, id = `predicted-${crypto.randomUUID()}`) {
     const shape = CANONICAL_SHAPES[`t:${term}`] || CANONICAL_SHAPES[`e:${term}`];
     if (!shape) return;
     const halfWidth = Math.abs(Math.cos(angle)) * shape.width / 2 + Math.abs(Math.sin(angle)) * shape.height / 2;
     const center = Math.max(halfWidth + 6, Math.min(this.geometry.width - halfWidth - 6, x));
-    this.predictedId = `predicted-${crypto.randomUUID()}`;
+    this.predictedId = id;
     const piece = this.add({ id: this.predictedId, term, ownerId, x: center, y, angle });
     this.activeId = this.predictedId;
     this.landed = false;
@@ -139,10 +140,10 @@ export class MultiPhysicsView {
     }
   }
 
-  step(now) {
-    const delta = this.lastTime === null ? 0 : Math.min(40, Math.max(0, now - this.lastTime));
+  step(now, maxCatchupMs = 40) {
+    const delta = this.lastTime === null ? 0 : Math.min(maxCatchupMs, Math.max(0, now - this.lastTime));
     this.lastTime = now;
-    this.accumulator = Math.min(50, this.accumulator + delta);
+    this.accumulator = Math.min(maxCatchupMs + PHYSICS_STEP_MS, this.accumulator + delta);
     while (this.accumulator >= PHYSICS_STEP_MS) {
       const active = this.pieces.get(this.activeId)?.body;
       if (active && !this.landed) applyDropGravity(active, this.engine.gravity);
