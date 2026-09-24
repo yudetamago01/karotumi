@@ -269,6 +269,10 @@ async function startGame() {
       </div>
       <button class="icon-button" id="pause-btn" aria-label="一時停止">Ⅱ</button>
     </header>
+    <div class="rotation-controls" aria-label="用語の回転">
+      <button class="rotate-button" id="rotate-left" type="button" aria-label="用語を左に回転" title="左に回転（Q）">↶</button>
+      <button class="rotate-button" id="rotate-right" type="button" aria-label="用語を右に回転" title="右に回転（E）">↷</button>
+    </div>
     <div id="overlay-root"></div>`, 'game-screen');
   const canvas = document.querySelector('#stage');
   const engine = Engine.create({ gravity: { x: 0, y: 1.15 }, enableSleeping: true });
@@ -278,7 +282,7 @@ async function startGame() {
   game = {
     canvas, ctx: canvas.getContext('2d'), engine, blocks: [], active: null,
     queue: [], pickTerm: createTermPicker(), pending: null, next: null, score: 0, paused: false, over: false,
-    dragPointerId: null,
+    dragPointerId: null, pendingAngle: 0,
     viewScale: 1, targetX: 0, width: 0, height: 0, spawnY: 185,
     base: null, baseWidth: 0, particles: [], resizeObserver: null, accumulator: 0,
     landing: false, landingTicks: 0, stableTicks: 0,
@@ -307,6 +311,8 @@ async function startGame() {
   canvas.addEventListener('pointercancel', onPointerCancel);
   canvas.addEventListener('lostpointercapture', onPointerCancel);
   document.querySelector('#pause-btn').addEventListener('click', togglePause);
+  document.querySelector('#rotate-left').addEventListener('click', () => rotatePending(-1));
+  document.querySelector('#rotate-right').addEventListener('click', () => rotatePending(1));
   window.addEventListener('keydown', onKeyDown);
   startMusic();
   lastFrame = performance.now();
@@ -377,12 +383,37 @@ function onPointerCancel(event) {
 }
 function onKeyDown(event) {
   if (screen !== 'game' || !game) return;
-  if (['ArrowLeft', 'ArrowRight', 'Space', 'Escape'].includes(event.code)) event.preventDefault();
+  if (['ArrowLeft', 'ArrowRight', 'Space', 'Escape', 'KeyQ', 'KeyE'].includes(event.code)) event.preventDefault();
   if (event.code === 'Escape') { togglePause(); return; }
   if (game.paused || game.over) return;
+  if (event.repeat && (event.code === 'KeyQ' || event.code === 'KeyE')) return;
   if (event.code === 'ArrowLeft') game.targetX = Math.max(20, game.targetX - 24);
   if (event.code === 'ArrowRight') game.targetX = Math.min(game.width - 20, game.targetX + 24);
+  if (event.code === 'KeyQ') rotatePending(-1);
+  if (event.code === 'KeyE') rotatePending(1);
   if (event.code === 'Space') drop();
+}
+function rotatePending(direction) {
+  if (!game || game.active || game.paused || game.over) return;
+  game.pendingAngle += direction * Math.PI / 12;
+  if (game.pendingAngle > Math.PI) game.pendingAngle -= Math.PI * 2;
+  if (game.pendingAngle < -Math.PI) game.pendingAngle += Math.PI * 2;
+  sfx('tap');
+}
+function setRotateEnabled(enabled) {
+  for (const button of document.querySelectorAll('.game-screen .rotate-button')) button.disabled = !enabled;
+}
+function pendingHalfExtents(sprite) {
+  const cosine = Math.abs(Math.cos(game.pendingAngle));
+  const sine = Math.abs(Math.sin(game.pendingAngle));
+  return {
+    x: (sprite.width * cosine + sprite.height * sine) / 2,
+    y: (sprite.height * cosine + sprite.width * sine) / 2,
+  };
+}
+function pendingX(sprite) {
+  const halfWidth = pendingHalfExtents(sprite).x;
+  return Math.max(halfWidth + 6, Math.min(game.width - halfWidth - 6, game.targetX));
 }
 function spawnPosition() {
   return game.spawnY;
@@ -393,14 +424,17 @@ function pendingSprite() {
 function drop() {
   if (!game || game.active || game.paused || game.over) return;
   const sprite = pendingSprite();
-  const x = Math.max(sprite.width / 2 + 6, Math.min(game.width - sprite.width / 2 - 6, game.targetX));
+  const x = pendingX(sprite);
   const body = makeTextBody(sprite, x, spawnPosition());
+  Body.setAngle(body, game.pendingAngle);
   Composite.add(game.engine.world, body);
   game.blocks.push(body);
   game.active = body;
+  setRotateEnabled(false);
   game.landing = false;
   game.landingTicks = 0;
   game.stableTicks = 0;
+  game.pendingAngle = 0;
   sfx('drop');
 }
 function settlePiece() {
@@ -424,6 +458,7 @@ function settlePiece() {
   sfx('score');
   burst(body.position.x, body.bounds.min.y, 12);
   game.active = null;
+  setRotateEnabled(true);
   const highest = game.blocks.reduce((y, block) => Math.min(y, block.bounds.min.y), game.base.position.y);
   game.spawnY = Math.min(185, highest - 155);
   game.pending = game.next;
@@ -442,6 +477,7 @@ function checkLoss() {
 function gameOver() {
   if (!game || game.over) return;
   game.over = true;
+  setRotateEnabled(false);
   sfx('over');
   stopMusic();
   rememberScore(game.score);
@@ -506,18 +542,19 @@ function draw() {
   ctx.beginPath(); ctx.roundRect(W / 2 - game.baseWidth / 2, baseY - 14, game.baseWidth, 28, 14); ctx.fill(); ctx.stroke();
   if (!game.active && !game.over) {
     const sprite = pendingSprite();
-    const x = Math.max(sprite.width / 2 + 6, Math.min(W - sprite.width / 2 - 6, game.targetX));
+    const x = pendingX(sprite);
     const y = spawnPosition();
+    const halfHeight = pendingHalfExtents(sprite).y;
     ctx.save();
     ctx.strokeStyle = '#63bbe1';
     ctx.lineWidth = 2;
     ctx.setLineDash([5, 8]);
     ctx.beginPath();
-    ctx.moveTo(x, y + sprite.height / 2);
+    ctx.moveTo(x, y + halfHeight);
     ctx.lineTo(x, Math.min(baseY - 25, H));
     ctx.stroke();
     ctx.restore();
-    drawSprite(ctx, sprite, x, y, 0, .75);
+    drawSprite(ctx, sprite, x, y, game.pendingAngle, .75);
   }
   for (const body of game.blocks) {
     const { sprite, offsetX, offsetY } = body.plugin.text;
@@ -536,7 +573,7 @@ function draw() {
 function updateViewScale() {
   const baseY = game.base.position.y;
   const top = Math.min(
-    game.spawnY - pendingSprite().height / 2 - 12,
+    game.spawnY - pendingHalfExtents(pendingSprite()).y - 12,
     ...game.blocks.map(block => block.bounds.min.y - 12),
   );
   const topPadding = Math.min(110, Math.max(62, game.height * .28));

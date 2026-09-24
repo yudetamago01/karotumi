@@ -3,7 +3,7 @@ import Matter from 'matter-js';
 import { createTermPicker } from '../src/termPicker.js';
 import { makeCompoundTextBody } from '../src/physicsBody.js';
 
-const { Engine, Bodies, Composite, Events } = Matter;
+const { Engine, Bodies, Body, Composite, Events } = Matter;
 const WORLD_WIDTH = 1000;
 const BASE_Y = 650;
 const MAX_PLAYERS = 10;
@@ -313,12 +313,16 @@ function fallbackShape(term) {
   return { term, width, height: 72, rectangles: [{ x: width / 2, y: 36, w: width - 8, h: 54 }] };
 }
 
-export function drop(room, userId, x, shape) {
+export function drop(room, userId, x, shape, angle = 0) {
   if (room.phase !== 'playing' || room.active || room.order[room.turnIndex] !== userId) throw new Error('今はあなたの番ではありません');
   if (shape) acceptShape(room, shape);
   const selectedShape = room.shape || fallbackShape(room.term);
-  const center = Math.max(selectedShape.width / 2 + 6, Math.min(WORLD_WIDTH - selectedShape.width / 2 - 6, Number(x) || 500));
+  const safeAngle = Number.isFinite(angle) ? Math.max(-Math.PI * 2, Math.min(Math.PI * 2, angle)) : 0;
+  const halfWidth = Math.abs(Math.cos(safeAngle)) * selectedShape.width / 2 + Math.abs(Math.sin(safeAngle)) * selectedShape.height / 2;
+  const requestedX = Number(x);
+  const center = Math.max(halfWidth + 6, Math.min(WORLD_WIDTH - halfWidth - 6, Number.isFinite(requestedX) ? requestedX : 500));
   const item = makeBody(selectedShape, center, room.spawnY);
+  Body.setAngle(item.body, safeAngle);
   const piece = {
     id: crypto.randomUUID(), term: room.term, ownerId: userId,
     shape: selectedShape, ...item, landed: false, landingTicks: 0, stableTicks: 0,

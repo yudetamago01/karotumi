@@ -36,7 +36,7 @@ export async function openMultiplayer(app, onHome, sfx) {
   await document.fonts.ready;
   const model = {
     config: null, user: null, room: null, stream: null, frame: 0,
-    disposed: false, x: 500, dragPointerId: null, drawn: [], display: new Map(),
+    disposed: false, x: 500, rotation: 0, dragPointerId: null, drawn: [], display: new Map(),
     sprites: new Map(), lastDraw: 0, lastReconnectProbe: 0, lastShapeTerm: null, chatCount: 0, notice: '',
   };
 
@@ -53,6 +53,8 @@ export async function openMultiplayer(app, onHome, sfx) {
 
   function renderEntry() {
     if (model.disposed) return;
+    if (model.onRotateKey) window.removeEventListener('keydown', model.onRotateKey);
+    model.onRotateKey = null;
     model.dragPointerId = null;
     model.stream?.close();
     model.stream = null;
@@ -164,7 +166,9 @@ export async function openMultiplayer(app, onHome, sfx) {
     const leader = room.members.find(m => m.id === leaderId);
     app.querySelector('#leader-name').textContent = leader ? `ゲームリーダー：${leader.name}` : '';
     const ownTurn = room.phase === 'playing' && room.currentPlayerId === model.user.id && me?.status === 'playing' && room.turnDeadline > 0;
-    app.querySelector('#drop-help').textContent = ownTurn ? 'クリックで落とす' : '';
+    app.querySelector('#drop-help').textContent = ownTurn ? 'Q/E またはボタンで回転・クリックで落とす' : '';
+    app.querySelector('#multi-rotate-left').disabled = !ownTurn;
+    app.querySelector('#multi-rotate-right').disabled = !ownTurn;
     app.querySelector('#start-room').hidden = !(room.phase === 'lobby' && leaderId === model.user.id);
     app.querySelector('#start-room').disabled = room.members.filter(m => m.status === 'playing').length < 2;
     app.querySelector('#loss-choice').hidden = me?.status !== 'eliminated';
@@ -174,6 +178,7 @@ export async function openMultiplayer(app, onHome, sfx) {
     renderMessages();
     const shapeTurn = `${room.term}:${room.turnDeadline}`;
     if (room.phase === 'playing' && room.term && room.turnDeadline > 0 && room.currentPlayerId === model.user.id && model.lastShapeTerm !== shapeTurn) {
+      model.rotation = 0;
       model.lastShapeTerm = shapeTurn;
       const sprite = spriteFor(room.term);
       api(`/api/rooms/${room.id}/shape`, shapeFor(room.term, sprite)).catch(() => {});
@@ -226,9 +231,14 @@ export async function openMultiplayer(app, onHome, sfx) {
     const ownTurn = room.phase === 'playing' && room.currentPlayerId === model.user.id && room.turnDeadline > 0;
     if (ownTurn && room.term) {
       const sprite = spriteFor(room.term);
-      const x = Math.max(sprite.width / 2 + 6, Math.min(WORLD_W - sprite.width / 2 - 6, model.x));
+      const rotatedHalfWidth = Math.abs(Math.cos(model.rotation)) * sprite.width / 2 + Math.abs(Math.sin(model.rotation)) * sprite.height / 2;
+      const x = Math.max(rotatedHalfWidth + 6, Math.min(WORLD_W - rotatedHalfWidth - 6, model.x));
       ctx.globalAlpha = .72;
-      ctx.drawImage(sprite.canvas, wx(x - sprite.width / 2), wy(room.spawnY - sprite.height / 2), sprite.width * scale, sprite.height * scale);
+      ctx.save();
+      ctx.translate(wx(x), wy(room.spawnY));
+      ctx.rotate(model.rotation);
+      ctx.drawImage(sprite.canvas, -sprite.width * scale / 2, -sprite.height * scale / 2, sprite.width * scale, sprite.height * scale);
+      ctx.restore();
       ctx.globalAlpha = 1;
     }
     model.drawn = [];
@@ -241,14 +251,21 @@ export async function openMultiplayer(app, onHome, sfx) {
       model.display.set(piece.id, previous);
       const sx = wx(previous.x);
       const sy = wy(previous.y);
-      const renderedHeight = sprite.height * scale;
+      const cosine = Math.cos(previous.angle);
+      const sine = Math.sin(previous.angle);
+      const renderedHeight = (Math.abs(cosine) * sprite.height + Math.abs(sine) * sprite.width) * scale;
       if (sy + renderedHeight / 2 < -80 || sy - renderedHeight / 2 > rect.height + 80) continue;
       ctx.save();
       ctx.translate(sx, sy);
       ctx.rotate(previous.angle);
       ctx.drawImage(sprite.canvas, (piece.offsetX - sprite.width / 2) * scale, (piece.offsetY - sprite.height / 2) * scale, sprite.width * scale, sprite.height * scale);
       ctx.restore();
-      model.drawn.push({ term: piece.term, x: sx + piece.offsetX * scale, y: sy + piece.offsetY * scale, w: sprite.width * scale, h: sprite.height * scale, index });
+      model.drawn.push({
+        term: piece.term,
+        x: sx + (piece.offsetX * cosine - piece.offsetY * sine) * scale,
+        y: sy + (piece.offsetX * sine + piece.offsetY * cosine) * scale,
+        w: sprite.width * scale, h: sprite.height * scale, angle: previous.angle, index,
+      });
     }
     const timer = app.querySelector('#turn-timer');
     if (timer) timer.textContent = room.turnDeadline ? `${Math.max(0, Math.ceil((room.turnDeadline - Date.now()) / 1000))}秒` : '—';
@@ -256,6 +273,8 @@ export async function openMultiplayer(app, onHome, sfx) {
   }
 
   function enterRoom(room) {
+    if (model.onRotateKey) window.removeEventListener('keydown', model.onRotateKey);
+    model.onRotateKey = null;
     model.room = room;
     model.x = 500;
     model.display.clear();
@@ -272,6 +291,7 @@ export async function openMultiplayer(app, onHome, sfx) {
           <div class="multi-pill" id="turn-timer">—</div>
         </header>
         <canvas id="multi-stage" aria-label="みんなで積むゲーム画面"></canvas>
+        <div class="rotation-controls"><button class="rotate-button" id="multi-rotate-left" type="button" aria-label="用語を左に回転" title="左に回転（Q）">↶</button><button class="rotate-button" id="multi-rotate-right" type="button" aria-label="用語を右に回転" title="右に回転（E）">↷</button></div>
         <div class="multi-turn"><strong id="turn-name"></strong><span id="next-term"></span><small id="drop-help"></small></div>
         <div id="winner-banner" class="winner-banner" hidden></div>
         <div id="loss-choice" class="loss-choice" hidden><strong>脱落しました</strong><button class="button primary" id="watch-btn">観戦する</button><button class="button secondary" id="exit-btn">退出する</button></div>
@@ -314,6 +334,21 @@ export async function openMultiplayer(app, onHome, sfx) {
       run(async () => { await api(`/api/rooms/${room.id}/chat`, { body: text }); form.reset(); });
     });
     const canvas = app.querySelector('#multi-stage');
+    const rotatePiece = delta => {
+      if (model.room.currentPlayerId !== model.user.id || !model.room.turnDeadline) return;
+      model.rotation = (model.rotation + delta + Math.PI * 2) % (Math.PI * 2);
+      sfx('tap');
+    };
+    app.querySelector('#multi-rotate-left').addEventListener('click', () => rotatePiece(-Math.PI / 12));
+    app.querySelector('#multi-rotate-right').addEventListener('click', () => rotatePiece(Math.PI / 12));
+    const onRotateKey = event => {
+      if (!app.querySelector('#multi-stage')) return;
+      if (!['KeyQ', 'KeyE'].includes(event.code) || event.repeat || /INPUT|TEXTAREA|SELECT/.test(event.target?.tagName || '')) return;
+      event.preventDefault();
+      rotatePiece(event.code === 'KeyQ' ? -Math.PI / 12 : Math.PI / 12);
+    };
+    window.addEventListener('keydown', onRotateKey);
+    model.onRotateKey = onRotateKey;
     const movePointer = event => {
       const bounds = canvas.getBoundingClientRect();
       model.x = Math.max(0, Math.min(WORLD_W, (event.clientX - bounds.left) / bounds.width * WORLD_W));
@@ -323,7 +358,7 @@ export async function openMultiplayer(app, onHome, sfx) {
       const term = model.room.term;
       const sprite = spriteFor(term);
       run(async () => {
-        model.room = (await api(`/api/rooms/${room.id}/drop`, { x: model.x, shape: shapeFor(term, sprite) })).room;
+        model.room = (await api(`/api/rooms/${room.id}/drop`, { x: model.x, angle: model.rotation, shape: shapeFor(term, sprite) })).room;
         renderRoomState(); sfx('drop');
       });
     };
@@ -333,7 +368,13 @@ export async function openMultiplayer(app, onHome, sfx) {
     canvas.addEventListener('pointerdown', event => {
       const me = model.room.members.find(m => m.id === model.user.id);
       if (me?.status === 'watching' || me?.status === 'eliminated') {
-        const hit = [...model.drawn].reverse().find(item => Math.abs(event.offsetX - item.x) < item.w / 2 && Math.abs(event.offsetY - item.y) < item.h / 2);
+        const hit = [...model.drawn].reverse().find(item => {
+          const dx = event.offsetX - item.x;
+          const dy = event.offsetY - item.y;
+          const cosine = Math.cos(item.angle);
+          const sine = Math.sin(item.angle);
+          return Math.abs(dx * cosine + dy * sine) < item.w / 2 && Math.abs(dy * cosine - dx * sine) < item.h / 2;
+        });
         if (hit) {
           app.querySelector('#term-title').textContent = hit.term;
           app.querySelector('#term-description').textContent = TERM_DEFINITIONS[hit.term] || 'カロッターの用語です。';
@@ -427,6 +468,7 @@ export async function openMultiplayer(app, onHome, sfx) {
   return {
     destroy() {
       model.disposed = true;
+      if (model.onRotateKey) window.removeEventListener('keydown', model.onRotateKey);
       model.stream?.close();
       cancelAnimationFrame(model.frame);
       if (location.search.includes('room=')) history.replaceState(null, '', '/');

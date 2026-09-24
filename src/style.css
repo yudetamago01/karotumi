@@ -151,6 +151,35 @@ button:focus-visible, a:focus-visible, input:focus-visible {
 }
 .game-screen { background: #dff6ff; }
 #stage { display: block; width: 100%; height: 100%; touch-action: none; }
+.rotation-controls {
+  position: absolute;
+  z-index: 2;
+  right: 16px;
+  bottom: calc(16px + env(safe-area-inset-bottom, 0px));
+  left: 16px;
+  display: flex;
+  justify-content: space-between;
+  pointer-events: none;
+}
+.rotate-button {
+  display: grid;
+  place-items: center;
+  width: 50px;
+  height: 50px;
+  padding: 0;
+  border: 2px solid #0c6b9c;
+  border-radius: 14px;
+  background: #fff;
+  color: #0b6494;
+  box-shadow: 2px 3px 0 #6fc4e5;
+  font-family: Fredoka, sans-serif;
+  font-size: 32px;
+  line-height: 1;
+  pointer-events: auto;
+  touch-action: manipulation;
+}
+.rotate-button:active { transform: translateY(2px); box-shadow: 1px 1px 0 #6fc4e5; }
+.rotate-button:disabled { opacity: .45; cursor: not-allowed; }
 .game-hud {
   position: absolute;
   z-index: 2;
@@ -321,6 +350,8 @@ button:focus-visible, a:focus-visible, input:focus-visible {
   .button { min-width: 210px; min-height: 60px; font-size: 19px; }
   .game-hud { gap: 6px; padding: 10px 8px; }
   .game-hud .icon-button { width: 38px; height: 42px; border-radius: 11px; font-size: 20px; }
+  .rotation-controls { right: 8px; left: 8px; bottom: calc(10px + env(safe-area-inset-bottom, 0px)); }
+  .rotate-button { width: 44px; height: 44px; border-radius: 12px; font-size: 28px; }
   .stats { gap: 4px; grid-template-columns: .86fr 1.4fr .86fr; }
   .stat { height: 55px; padding: 4px 2px; border-radius: 10px; }
   .stat span { font-size: 9px; }

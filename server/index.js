@@ -243,7 +243,7 @@ const server = http.createServer(async (req, res) => {
       if (action === 'start') startRoom(room, user);
       else if (action === 'shape') {
         if (!acceptShape(room, input)) throw new Error('文字の形を登録できませんでした');
-      } else if (action === 'drop') drop(room, user.id, input.x, input.shape);
+      } else if (action === 'drop') drop(room, user.id, input.x, input.shape, input.angle);
       else if (action === 'choice') chooseAfterLoss(room, user.id, input.choice);
       else if (action === 'leave') leaveRoom(room, user.id);
       else if (action === 'chat') {
