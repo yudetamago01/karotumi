@@ -94,6 +94,7 @@ function tone(freq, duration, type = 'sine', gain = .08, delay = 0) {
 }
 function sfx(name) {
   if (name === 'tap') { tone(530, .12, 'sine', .13); tone(780, .12, 'sine', .08, .05); }
+  if (name === 'back') { tone(740, .11, 'sine', .11); tone(520, .19, 'sine', .12, .07); }
   if (name === 'exit') { tone(490, .13, 'sine', .11); tone(370, .16, 'sine', .12, .09); tone(247, .23, 'sine', .12, .19); }
   if (name === 'drop') tone(320, .13, 'sine', .10);
   if (name === 'land') { tone(250, .14, 'sine', .16); tone(390, .18, 'sine', .10, .055); }
@@ -161,7 +162,7 @@ async function showRanking() {
     <p id="ranking-notice" class="ranking-notice" role="status">読み込み中…</p>
     <ol id="ranking-list" class="ranking-list"></ol>
   </section>`, 'ranking-screen');
-  document.querySelector('#ranking-back').addEventListener('click', () => { sfx('exit'); home(); });
+  document.querySelector('#ranking-back').addEventListener('click', () => { sfx('back'); home(); });
   const notice = document.querySelector('#ranking-notice');
   const login = document.querySelector('#ranking-login');
   const renderLogin = (user, config) => {
@@ -204,7 +205,7 @@ async function showMultiplayer() {
   screen = 'multi';
   startMusic();
   const instance = await openMultiplayer(app, () => {
-    sfx('exit');
+    sfx('back');
     history.replaceState(null, '', '/');
     home();
   }, sfx);
@@ -222,7 +223,7 @@ function showSettings() {
     <div class="setting-row"><span>音量</span><div class="volume-control"><input id="volume-range" type="range" min="0" max="100" value="${settings.volume}" aria-label="音量"><output id="volume-value">${settings.volume}%</output></div></div>
     <a class="reference" href="https://karotter-wiki.vercel.app/index/index.html" target="_blank" rel="noopener noreferrer">参考サイト：カロッター用語辞典 ↗</a>
   </section>`, 'settings-screen');
-  document.querySelector('#back-btn').addEventListener('click', () => { sfx('exit'); home(); });
+  document.querySelector('#back-btn').addEventListener('click', () => { sfx('back'); home(); });
   document.querySelector('#music-toggle').addEventListener('click', e => {
     settings.music = !settings.music;
     e.currentTarget.classList.toggle('on', settings.music);
@@ -451,7 +452,7 @@ function gameOver() {
     <button class="button secondary" id="end-home-btn">ホームへ</button>
   </section></div>`;
   document.querySelector('#again-btn').addEventListener('click', () => { sfx('tap'); startGame(); });
-  document.querySelector('#end-home-btn').addEventListener('click', () => { sfx('exit'); home(); });
+  document.querySelector('#end-home-btn').addEventListener('click', () => { sfx('back'); home(); });
 }
 function togglePause() {
   if (!game || game.over) return;
@@ -467,7 +468,7 @@ function togglePause() {
   </section></div>`;
   document.querySelector('#resume-btn').addEventListener('click', togglePause);
   document.querySelector('#restart-btn').addEventListener('click', () => { sfx('tap'); startGame(); });
-  document.querySelector('#pause-home-btn').addEventListener('click', () => { sfx('exit'); home(); });
+  document.querySelector('#pause-home-btn').addEventListener('click', () => { sfx('back'); home(); });
 }
 function burst(x, y, count) {
   if (!game) return;
