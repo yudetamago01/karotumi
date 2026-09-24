@@ -12,6 +12,7 @@ test('multiplayer drop keeps the chosen angle in physics and room state', () => 
     order: ['player-1', 'player-2'], turnIndex: 0, term: 'カロート',
     turnDeadline: Date.now() + 10_000, spawnY: 160, winnerId: null,
     active: null, pieces: [], messages: [], listeners: new Set(),
+    geometry: { width: 1000, baseY: 650, baseWidth: PLATE_WIDTH, spawnTop: 160 },
     engine: Matter.Engine.create(),
     base: Matter.Bodies.rectangle(500, 650, PLATE_WIDTH, 28, { isStatic: true }),
   };

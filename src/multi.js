@@ -2,10 +2,9 @@ import { makeTextSprite } from './textBodies.js';
 import { TERM_DEFINITIONS } from './termDefinitions.js';
 import { bindHoldRotation, rotationIcon } from './rotationControls.js';
 import { multiStageView } from './multiStageView.js';
-import { PLATE_WIDTH, TEXT_STAGE_WIDTH } from './stageGeometry.js';
+import { TEXT_STAGE_WIDTH, stageGeometry } from './stageGeometry.js';
 
 const colors = ['#087bb6', '#1466ad', '#0a91b9', '#456fbd', '#137e9e'];
-const WORLD_W = 1000;
 const API_ORIGIN = import.meta.env.VITE_API_ORIGIN || (import.meta.env.DEV ? 'http://127.0.0.1:3001' : '');
 
 function escapeHtml(value) {
@@ -40,7 +39,7 @@ export async function openMultiplayer(app, onHome, sfx) {
     config: null, user: null, room: null, stream: null, frame: 0,
     disposed: false, x: 500, rotation: 0, dragPointerId: null, drawn: [], display: new Map(),
     sprites: new Map(), lastDraw: 0, lastReconnectProbe: 0, lastShapeTerm: null, chatCount: 0, notice: '', dropPending: false,
-    authCheckInFlight: false,
+    authCheckInFlight: false, cameraScale: null, cameraSize: '',
   };
 
   const showError = message => {
@@ -222,9 +221,8 @@ export async function openMultiplayer(app, onHome, sfx) {
 
   function gameFrame(now = performance.now()) {
     if (model.disposed || !model.room || !app.querySelector('#multi-stage')) return;
-    // The server sends moving positions at 6Hz. Rendering this view
-    // at 30fps is enough for interpolation and avoids making every compound
-    // text mask redraw at the full monitor refresh rate.
+    // The falling word arrives at 20Hz; the rest of the pile arrives at 6Hz.
+    // Keep rendering at 30fps so large piles remain light on phones.
     if (now - model.lastDraw < 33) {
       model.frame = requestAnimationFrame(gameFrame);
       return;
@@ -241,23 +239,29 @@ export async function openMultiplayer(app, onHome, sfx) {
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.fillStyle = '#dff6ff';
     ctx.fillRect(0, 0, rect.width, rect.height);
-    const view = multiStageView(rect.width, rect.height, model.room.spawnY ?? 160);
+    const geometry = model.room.geometry || stageGeometry(rect.width, rect.height);
+    const targetView = multiStageView(rect.width, rect.height, model.room.spawnY ?? geometry.spawnTop, geometry);
+    const size = `${rect.width}:${rect.height}`;
+    if (model.cameraSize !== size || model.cameraScale === null) model.cameraScale = targetView.targetScale;
+    else model.cameraScale += (targetView.targetScale - model.cameraScale) * .12;
+    model.cameraSize = size;
+    const view = multiStageView(rect.width, rect.height, model.room.spawnY ?? geometry.spawnTop, geometry, model.cameraScale);
     model.view = view;
     const { scale } = view;
     const wx = view.screenX;
     const wy = view.screenY;
     ctx.fillStyle = '#fff';
     ctx.strokeStyle = '#176eaa';
-    ctx.lineWidth = 3;
+    ctx.lineWidth = 3 * scale;
     ctx.beginPath();
-    ctx.roundRect(wx((WORLD_W - PLATE_WIDTH) / 2), wy(636), PLATE_WIDTH * scale, 28 * scale, 14 * scale);
+    ctx.roundRect(wx((geometry.width - geometry.baseWidth) / 2), wy(geometry.baseY - 14), geometry.baseWidth * scale, 28 * scale, 14 * scale);
     ctx.fill(); ctx.stroke();
     const room = model.room;
     const ownTurn = room.phase === 'playing' && room.currentPlayerId === model.user.id && room.turnDeadline > 0;
     if (ownTurn && room.term) {
       const sprite = spriteFor(room.term);
       const rotatedHalfWidth = Math.abs(Math.cos(model.rotation)) * sprite.width / 2 + Math.abs(Math.sin(model.rotation)) * sprite.height / 2;
-      const x = Math.max(rotatedHalfWidth + 6, Math.min(WORLD_W - rotatedHalfWidth - 6, model.x));
+      const x = Math.max(rotatedHalfWidth + 6, Math.min(geometry.width - rotatedHalfWidth - 6, model.x));
       ctx.globalAlpha = .72;
       ctx.save();
       ctx.translate(wx(x), wy(room.spawnY));
@@ -270,9 +274,10 @@ export async function openMultiplayer(app, onHome, sfx) {
     for (const [index, piece] of room.pieces.entries()) {
       const sprite = spriteFor(piece.term);
       const previous = model.display.get(piece.id) || { x: piece.x, y: piece.y, angle: piece.angle };
-      previous.x += (piece.x - previous.x) * .35;
-      previous.y += (piece.y - previous.y) * .35;
-      previous.angle += (piece.angle - previous.angle) * .35;
+      const follow = piece.id === room.activeId ? .7 : .35;
+      previous.x += (piece.x - previous.x) * follow;
+      previous.y += (piece.y - previous.y) * follow;
+      previous.angle += (piece.angle - previous.angle) * follow;
       model.display.set(piece.id, previous);
       const sx = wx(previous.x);
       const sy = wy(previous.y);
@@ -303,9 +308,10 @@ export async function openMultiplayer(app, onHome, sfx) {
     if (model.onRotateKey) window.removeEventListener('keydown', model.onRotateKey);
     model.onRotateKey = null;
     model.room = room;
-    model.x = 500;
+    model.x = room.geometry?.width / 2 || 500;
     model.dropPending = false;
     model.view = null;
+    model.cameraScale = null;
     model.display.clear();
     model.lastShapeTerm = null;
     model.chatCount = 0;
@@ -359,7 +365,13 @@ export async function openMultiplayer(app, onHome, sfx) {
       });
     });
     app.querySelector('#copy-id').addEventListener('click', () => navigator.clipboard.writeText(room.id).then(() => showError('ルームIDをコピーしました')).catch(() => showError('コピーできませんでした')));
-    app.querySelector('#start-room').addEventListener('click', () => { sfx('tap'); run(async () => { model.room = (await api(`/api/rooms/${room.id}/start`, {})).room; renderRoomState(); }); });
+    app.querySelector('#start-room').addEventListener('click', () => { sfx('tap'); run(async () => {
+      const bounds = app.querySelector('#multi-stage').getBoundingClientRect();
+      model.room = (await api(`/api/rooms/${room.id}/start`, { viewport: { width: bounds.width, height: bounds.height } })).room;
+      model.x = model.room.geometry.width / 2;
+      model.cameraScale = null;
+      renderRoomState();
+    }); });
     app.querySelector('#watch-btn').addEventListener('click', () => run(async () => { model.room = (await api(`/api/rooms/${room.id}/choice`, { choice: 'watching' })).room; renderRoomState(); }));
     app.querySelector('#exit-btn').addEventListener('click', requestLeave);
     app.querySelector('#chat-form').addEventListener('submit', event => {
@@ -393,8 +405,9 @@ export async function openMultiplayer(app, onHome, sfx) {
     model.onRotateKey = onRotateKey;
     const movePointer = event => {
       const bounds = canvas.getBoundingClientRect();
-      const view = model.view || multiStageView(bounds.width, bounds.height, model.room.spawnY ?? 160);
-      model.x = Math.max(0, Math.min(WORLD_W, view.worldX(event.clientX - bounds.left)));
+      const geometry = model.room.geometry || stageGeometry(bounds.width, bounds.height);
+      const view = model.view || multiStageView(bounds.width, bounds.height, model.room.spawnY ?? geometry.spawnTop, geometry);
+      model.x = Math.max(0, Math.min(geometry.width, view.worldX(event.clientX - bounds.left)));
     };
     const dropCurrent = () => {
       if (model.dropPending || model.room.currentPlayerId !== model.user.id || !model.room.turnDeadline) return;
@@ -453,6 +466,10 @@ export async function openMultiplayer(app, onHome, sfx) {
       if (model.disposed) return;
       const next = JSON.parse(event.data);
       if (!next.messages) next.messages = model.room?.messages || [];
+      if (model.room?.phase === 'lobby' && next.phase === 'playing') {
+        model.x = next.geometry?.width / 2 || 500;
+        model.cameraScale = null;
+      }
       model.room = next;
       renderRoomState();
     });

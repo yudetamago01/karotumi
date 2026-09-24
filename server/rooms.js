@@ -4,11 +4,9 @@ import { createTermPicker } from '../src/termPicker.js';
 import { makeCompoundTextBody } from '../src/physicsBody.js';
 import { applyDropGravity, PHYSICS_STEP_MS } from '../src/dropMotion.js';
 import { CANONICAL_SHAPES } from '../src/canonicalShapes.js';
-import { PLATE_WIDTH } from '../src/stageGeometry.js';
+import { stageGeometry } from '../src/stageGeometry.js';
 
 const { Engine, Bodies, Body, Composite, Events } = Matter;
-const WORLD_WIDTH = 1000;
-const BASE_Y = 650;
 const MAX_PLAYERS = 10;
 const TURN_MS = 10_000;
 const END_SCREEN_MS = 3_500;
@@ -22,7 +20,7 @@ function makeEngine(room) {
   engine.positionIterations = 10;
   engine.velocityIterations = 10;
   engine.constraintIterations = 4;
-  const base = Bodies.rectangle(500, BASE_Y, PLATE_WIDTH, 28, { isStatic: true, label: 'base', friction: 1.1 });
+  const base = Bodies.rectangle(room.geometry.width / 2, room.geometry.baseY, room.geometry.baseWidth, 28, { isStatic: true, label: 'base', friction: 1.1 });
   Composite.add(engine.world, base);
   room.engine = engine;
   room.base = base;
@@ -50,7 +48,7 @@ function serialize(room) {
     id: room.id, phase: room.phase, hostId: room.hostId, leaderId: room.hostId,
     members: [...room.members.values()], order: room.order,
     turnIndex: room.turnIndex, term: room.term, turnDeadline: room.turnDeadline,
-    spawnY: room.spawnY, winnerId: room.winnerId, activeId: room.active?.id || null,
+    spawnY: room.spawnY, geometry: room.geometry, winnerId: room.winnerId, activeId: room.active?.id || null,
     pieces: room.pieces.map(p => ({
       id: p.id, term: p.term, ownerId: p.ownerId,
       x: p.body.position.x, y: p.body.position.y, angle: p.body.angle,
@@ -79,7 +77,7 @@ function hydrate(row) {
     hostId: data.hostId || data.leaderId, members: new Map((data.members || []).map(m => [m.id, { ...m, avatar: m.avatar || null }])),
     order: data.order, turnIndex: data.turnIndex, term: data.term,
     turnDeadline: data.turnDeadline, spawnY: data.spawnY,
-    winnerId: data.winnerId, pieces: [], messages: data.messages || [],
+    winnerId: data.winnerId, pieces: [], messages: data.messages || [], geometry: null,
     active: null, listeners: new Set(), dirty: false,
     lastPersist: Date.now(), persistChain: Promise.resolve(), resetTimer: null,
   };
@@ -163,7 +161,7 @@ export async function createRoom(user, password = '') {
     phase: 'lobby', hostId: user.id,
     members: new Map([[user.id, { id: user.id, name: user.name, avatar: user.avatar || null, status: 'playing' }]]),
     order: [user.id], turnIndex: -1, term: null, turnDeadline: 0,
-    spawnY: 160, winnerId: null, pieces: [], messages: [],
+    spawnY: 160, winnerId: null, pieces: [], messages: [], geometry: null,
     active: null, listeners: new Set(), dirty: true, resetTimer: null,
     lastPersist: 0, persistChain: Promise.resolve(),
   };
@@ -212,8 +210,8 @@ export function subscribe(room, response) {
   response.on('close', () => room.listeners.delete(response));
 }
 
-function broadcastTick(room) {
-  const pieces = room.pieces.flatMap((p, index) => p.body.isSleeping ? [] : [[
+function broadcastTick(room, activeOnly = false) {
+  const pieces = room.pieces.flatMap((p, index) => p.body.isSleeping || (activeOnly && p !== room.active) ? [] : [[
     index,
     Math.round(p.body.position.x * 10) / 10,
     Math.round(p.body.position.y * 10) / 10,
@@ -257,6 +255,7 @@ function resetToLobby(room) {
   room.term = null;
   room.turnDeadline = 0;
   room.spawnY = 160;
+  room.geometry = null;
   room.winnerId = null;
   room.pieces = [];
   room.active = null;
@@ -286,11 +285,22 @@ function chooseTurn(room) {
   publish(room);
 }
 
-export function startRoom(room, user) {
+export function startRoom(room, user, viewport = {}) {
   if (room.phase !== 'lobby') throw new Error('すでに開始しています');
   if (room.hostId !== user.id) throw new Error('ルーム作成者だけが開始できます');
   if (room.order.length < 2) throw new Error('2人以上で開始できます');
   room.phase = 'playing';
+  const width = Number(viewport?.width);
+  const height = Number(viewport?.height);
+  // The leader's playable canvas sets the room's physics world. Every client
+  // then observes the same authoritative pile, even on another screen size.
+  room.geometry = stageGeometry(
+    width >= 280 && width <= 3840 ? width : 1000,
+    height >= 320 && height <= 2400 ? height : 700,
+  );
+  room.spawnY = Math.min(room.geometry.spawnTop, room.geometry.baseY - 100);
+  room.physicsTime = performance.now();
+  room.physicsAccumulator = 0;
   room.pickTerm = createTermPicker();
   makeEngine(room);
   chooseTurn(room);
@@ -309,7 +319,7 @@ export function drop(room, userId, x, _shape, angle = 0) {
   const safeAngle = Number.isFinite(angle) ? Math.max(-Math.PI * 2, Math.min(Math.PI * 2, angle)) : 0;
   const halfWidth = Math.abs(Math.cos(safeAngle)) * selectedShape.width / 2 + Math.abs(Math.sin(safeAngle)) * selectedShape.height / 2;
   const requestedX = Number(x);
-  const center = Math.max(halfWidth + 6, Math.min(WORLD_WIDTH - halfWidth - 6, Number.isFinite(requestedX) ? requestedX : 500));
+  const center = Math.max(halfWidth + 6, Math.min(room.geometry.width - halfWidth - 6, Number.isFinite(requestedX) ? requestedX : room.geometry.width / 2));
   const item = makeBody(selectedShape, center, room.spawnY);
   Body.setAngle(item.body, safeAngle);
   const piece = {
@@ -368,47 +378,66 @@ export async function addMessage(room, user, body) {
   return message;
 }
 
-function step(room) {
+function stepPhysics(room) {
   if (room.phase !== 'playing') return;
   if (!room.active && room.turnDeadline && Date.now() >= room.turnDeadline) {
-    drop(room, room.order[room.turnIndex], 500);
+    drop(room, room.order[room.turnIndex], room.geometry.width / 2);
   }
-  // Two smaller steps prevent deep glyph contacts from pushing the pile apart.
   if (room.active && !room.active.landed) applyDropGravity(room.active.body, room.engine.gravity);
   Engine.update(room.engine, PHYSICS_STEP_MS);
-  if (room.active && !room.active.landed) applyDropGravity(room.active.body, room.engine.gravity);
-  Engine.update(room.engine, PHYSICS_STEP_MS);
-  for (const piece of [...room.pieces]) {
-    if (piece.body.position.y > BASE_Y + 95 || piece.body.bounds.max.x < -20 || piece.body.bounds.min.x > WORLD_WIDTH + 20) {
-      Composite.remove(room.engine.world, piece.body);
-      room.pieces = room.pieces.filter(p => p !== piece);
-      eliminate(room, piece.ownerId);
-    }
-  }
   if (room.active?.landed) {
     const piece = room.active;
-    piece.landingTicks += 2;
-    if (piece.body.speed < .65 && piece.body.angularSpeed < .025) piece.stableTicks += 2;
+    piece.landingTicks++;
+    if (piece.body.speed < .65 && piece.body.angularSpeed < .025) piece.stableTicks++;
     else piece.stableTicks = 0;
     if (piece.landingTicks >= 30 && (piece.stableTicks >= 16 || piece.landingTicks >= 170)) {
       // Advancing the turn must not force this piece asleep while it still
       // has unresolved contacts with the letters below it.
       room.active = null;
-      const highest = room.pieces.reduce((y, p) => Math.min(y, p.body.bounds.min.y), BASE_Y);
-      room.spawnY = Math.min(160, highest - 155);
+      const highest = room.pieces.reduce((y, p) => Math.min(y, p.body.bounds.min.y), room.geometry.baseY);
+      room.spawnY = Math.min(room.geometry.spawnTop, highest - 155);
       chooseTurn(room);
     }
   }
+}
+
+function checkLoss(room) {
+  const leftLimit = room.base.bounds.min.x - 120;
+  const rightLimit = room.base.bounds.max.x + 120;
+  for (const piece of [...room.pieces]) {
+    if (piece.body.position.y > room.geometry.baseY + 95 || piece.body.bounds.max.x < leftLimit || piece.body.bounds.min.x > rightLimit) {
+      Composite.remove(room.engine.world, piece.body);
+      room.pieces = room.pieces.filter(p => p !== piece);
+      eliminate(room, piece.ownerId);
+    }
+  }
+}
+
+export function advanceRoomPhysics(room, now = performance.now()) {
+  if (room.phase !== 'playing') return;
+  const delta = Math.min(40, Math.max(0, now - (room.physicsTime ?? now)));
+  room.physicsTime = now;
+  room.physicsAccumulator = Math.min(50, (room.physicsAccumulator || 0) + delta);
+  while (room.phase === 'playing' && room.physicsAccumulator >= PHYSICS_STEP_MS) {
+    stepPhysics(room);
+    room.physicsAccumulator -= PHYSICS_STEP_MS;
+  }
+  if (room.phase === 'playing') checkLoss(room);
 }
 
 setInterval(() => {
   for (const room of rooms.values()) {
     try {
       if (room.phase === 'playing') {
-        step(room);
-        if (room.listeners.size && Date.now() - (room.lastBroadcast || 0) >= 166) {
-          room.lastBroadcast = Date.now();
+        advanceRoomPhysics(room);
+        const now = Date.now();
+        if (room.listeners.size && now - (room.lastBroadcast || 0) >= 166) {
+          room.lastBroadcast = now;
+          room.lastActiveBroadcast = now;
           broadcastTick(room);
+        } else if (room.listeners.size && room.active && now - (room.lastActiveBroadcast || 0) >= 50) {
+          room.lastActiveBroadcast = now;
+          broadcastTick(room, true);
         }
       }
       if (room.dirty && Date.now() - (room.lastPersistAttempt || 0) > 5000) {

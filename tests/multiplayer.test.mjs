@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { stageGeometry } from '../src/stageGeometry.js';
 
 const base = process.env.TEST_BASE_URL || 'http://127.0.0.1:3001';
 const origin = process.env.TEST_ORIGIN || 'http://127.0.0.1:5173';
@@ -36,9 +37,11 @@ test('two players join, start, chat, and receive room events', async () => {
   assert.equal(joined.response.status, 200);
   assert.equal(joined.data.room.members.filter(m => m.status === 'playing').length, 2);
 
-  const started = await request(`/api/rooms/${id}/start`, { method: 'POST', headers: { Cookie: a.cookie }, body: '{}' });
+  const viewport = { width: 390, height: 476 };
+  const started = await request(`/api/rooms/${id}/start`, { method: 'POST', headers: { Cookie: a.cookie }, body: JSON.stringify({ viewport }) });
   assert.equal(started.response.status, 200);
   assert.equal(started.data.room.phase, 'playing');
+  assert.deepEqual(started.data.room.geometry, stageGeometry(viewport.width, viewport.height));
   assert.ok(started.data.room.turnDeadline > Date.now());
 
   const midgame = await request(`/api/rooms/${id}/join`, { method: 'POST', headers: { Cookie: c.cookie }, body: JSON.stringify({ password: 'ひみつ' }) });

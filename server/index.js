@@ -246,7 +246,7 @@ const server = http.createServer(async (req, res) => {
       }
       if (req.method !== 'POST') { json(res, 405, { error: 'Method not allowed' }); return; }
       const input = await bodyJson(req);
-      if (action === 'start') startRoom(room, user);
+      if (action === 'start') startRoom(room, user, input.viewport);
       else if (action === 'shape') {
         if (!acceptShape(room, input)) throw new Error('文字の形を登録できませんでした');
       } else if (action === 'drop') drop(room, user.id, input.x, input.shape, input.angle);
