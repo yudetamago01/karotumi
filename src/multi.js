@@ -1,10 +1,10 @@
 import { makeTextSprite } from './textBodies.js';
 import { TERM_DEFINITIONS } from './termDefinitions.js';
 import { bindHoldRotation, rotationIcon } from './rotationControls.js';
+import { multiStageView } from './multiStageView.js';
 
 const colors = ['#087bb6', '#1466ad', '#0a91b9', '#456fbd', '#137e9e'];
 const WORLD_W = 1000;
-const WORLD_H = 700;
 const API_ORIGIN = import.meta.env.VITE_API_ORIGIN || (import.meta.env.DEV ? 'http://127.0.0.1:3001' : '');
 
 function escapeHtml(value) {
@@ -39,6 +39,7 @@ export async function openMultiplayer(app, onHome, sfx) {
     config: null, user: null, room: null, stream: null, frame: 0,
     disposed: false, x: 500, rotation: 0, dragPointerId: null, drawn: [], display: new Map(),
     sprites: new Map(), lastDraw: 0, lastReconnectProbe: 0, lastShapeTerm: null, chatCount: 0, notice: '',
+    authCheckInFlight: false,
   };
 
   const showError = message => {
@@ -51,6 +52,28 @@ export async function openMultiplayer(app, onHome, sfx) {
     try { await action(); showError(''); }
     catch (error) { showError(error.message); }
   }
+
+  async function refreshAuth() {
+    if (model.disposed || model.user || model.authCheckInFlight || !app.querySelector('.multi-entry')) return;
+    model.authCheckInFlight = true;
+    try {
+      const { user } = await api('/api/me');
+      if (!user || model.disposed || !app.querySelector('.multi-entry')) return;
+      model.user = user;
+      renderEntry();
+      const roomId = new URLSearchParams(location.search).get('room');
+      if (roomId) {
+        try { enterRoom((await api(`/api/rooms/${encodeURIComponent(roomId)}/join`, {})).room); }
+        catch (error) { showError(error.message); }
+      }
+    } catch { /* The original page may still be waiting for OAuth. */ }
+    finally { model.authCheckInFlight = false; }
+  }
+
+  const onAuthReturn = () => { if (!document.hidden) void refreshAuth(); };
+  window.addEventListener('pageshow', onAuthReturn);
+  window.addEventListener('focus', onAuthReturn);
+  document.addEventListener('visibilitychange', onAuthReturn);
 
   function renderEntry() {
     if (model.disposed) return;
@@ -137,6 +160,8 @@ export async function openMultiplayer(app, onHome, sfx) {
     const watcherList = watching.map(m => `<li>${avatarMarkup(m, 'member-avatar')}<span>${escapeHtml(m.name)}${m.id === leaderId ? '（リーダー）' : ''}${m.status === 'eliminated' ? '（脱落）' : ''}</span></li>`).join('');
     app.querySelector('#playing-list').innerHTML = playerList || '<li>なし</li>';
     app.querySelector('#watching-list').innerHTML = watcherList || '<li>なし</li>';
+    app.querySelector('#member-count').textContent = `${playing.length}・観戦${watching.length}`;
+    app.querySelector('#member-toggle').setAttribute('aria-label', `プレイ中${playing.length}人、観戦中${watching.length}人。メンバー一覧を開閉`);
   }
 
   function renderMessages() {
@@ -169,7 +194,8 @@ export async function openMultiplayer(app, onHome, sfx) {
     const leader = room.members.find(m => m.id === leaderId);
     app.querySelector('#leader-name').textContent = leader ? `ゲームリーダー：${leader.name}` : '';
     const ownTurn = room.phase === 'playing' && room.currentPlayerId === model.user.id && me?.status === 'playing' && room.turnDeadline > 0;
-    app.querySelector('#drop-help').textContent = ownTurn ? 'Q/E またはボタンで回転・クリックで落とす' : '';
+    app.querySelector('#drop-help').textContent = ownTurn
+      ? (matchMedia('(pointer: coarse)').matches ? '指で動かし、離すと落下' : 'Q/E またはボタンで回転・クリックで落とす') : '';
     app.querySelector('#multi-rotate-left').disabled = !ownTurn;
     app.querySelector('#multi-rotate-right').disabled = !ownTurn;
     app.querySelector('#start-room').hidden = !(room.phase === 'lobby' && leaderId === model.user.id);
@@ -219,11 +245,11 @@ export async function openMultiplayer(app, onHome, sfx) {
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.fillStyle = '#dff6ff';
     ctx.fillRect(0, 0, rect.width, rect.height);
-    const scale = rect.width / WORLD_W;
-    const camera = Math.min(0, (model.room.spawnY || 160) - 160);
-    const offsetY = Math.max(0, rect.height - WORLD_H * scale);
-    const wx = x => x * scale;
-    const wy = y => offsetY + (y - camera) * scale;
+    const view = multiStageView(rect.width, rect.height, model.room.spawnY ?? 160);
+    model.view = view;
+    const { scale } = view;
+    const wx = view.screenX;
+    const wy = view.screenY;
     ctx.fillStyle = '#fff';
     ctx.strokeStyle = '#176eaa';
     ctx.lineWidth = 3;
@@ -282,6 +308,7 @@ export async function openMultiplayer(app, onHome, sfx) {
     model.onRotateKey = null;
     model.room = room;
     model.x = 500;
+    model.view = null;
     model.display.clear();
     model.lastShapeTerm = null;
     model.chatCount = 0;
@@ -302,9 +329,9 @@ export async function openMultiplayer(app, onHome, sfx) {
         <div id="loss-choice" class="loss-choice" hidden><strong>脱落しました</strong><button class="button primary" id="watch-btn">観戦する</button><button class="button secondary" id="exit-btn">退出する</button></div>
       </section>
       <aside class="multi-side">
-        <div class="multi-side-head"><div class="member-heading"><strong>メンバー</strong><small id="leader-name"></small></div><button class="tiny-button" id="leave-btn">退出</button></div>
-        <div class="member-group"><h3>プレイ中</h3><ul id="playing-list"></ul></div>
-        <div class="member-group"><h3>観戦中</h3><ul id="watching-list"></ul></div>
+        <div class="multi-side-head"><button class="member-toggle" id="member-toggle" type="button" aria-controls="multi-members" aria-expanded="false">メンバー <span id="member-count">0・観戦0</span></button><div class="member-heading"><strong>メンバー</strong><small id="leader-name"></small></div><button class="tiny-button" id="leave-btn">退出</button></div>
+        <div class="multi-members" id="multi-members"><div class="member-group"><h3>プレイ中</h3><ul id="playing-list"></ul></div>
+        <div class="member-group"><h3>観戦中</h3><ul id="watching-list"></ul></div></div>
         <button class="button primary multi-start" id="start-room">ゲーム開始</button>
         <section class="chat-panel"><h3>チャット</h3><div id="chat-messages" class="chat-messages"></div>
           <form id="chat-form"><input name="body" maxlength="200" autocomplete="off" placeholder="メッセージ"><button type="submit" aria-label="送信">➤</button></form>
@@ -315,6 +342,13 @@ export async function openMultiplayer(app, onHome, sfx) {
       <div id="leave-dialog" class="term-dialog" hidden><section class="leave-confirm"><h2>ルームから退出しますか？</h2><p>参加中のルームから退出します。</p><div><button id="cancel-leave" class="button secondary">キャンセル</button><button id="confirm-leave" class="button primary">退出する</button></div></section></div>
     </main>`;
     const leaveDialog = app.querySelector('#leave-dialog');
+    const memberToggle = app.querySelector('#member-toggle');
+    const memberPanel = app.querySelector('#multi-members');
+    memberToggle.addEventListener('click', () => {
+      const open = memberPanel.classList.toggle('open');
+      memberToggle.setAttribute('aria-expanded', String(open));
+      sfx('tap');
+    });
     const requestLeave = () => { sfx('tap'); leaveDialog.hidden = false; };
     app.querySelector('#leave-btn').addEventListener('click', requestLeave);
     app.querySelector('#cancel-leave').addEventListener('click', () => { sfx('back'); leaveDialog.hidden = true; });
@@ -339,6 +373,10 @@ export async function openMultiplayer(app, onHome, sfx) {
       run(async () => { await api(`/api/rooms/${room.id}/chat`, { body: text }); form.reset(); });
     });
     const canvas = app.querySelector('#multi-stage');
+    canvas.addEventListener('pointerdown', () => {
+      memberPanel.classList.remove('open');
+      memberToggle.setAttribute('aria-expanded', 'false');
+    });
     const rotatePiece = delta => {
       if (model.room.currentPlayerId !== model.user.id || !model.room.turnDeadline) return;
       model.rotation = (model.rotation + delta + Math.PI * 2) % (Math.PI * 2);
@@ -358,7 +396,8 @@ export async function openMultiplayer(app, onHome, sfx) {
     model.onRotateKey = onRotateKey;
     const movePointer = event => {
       const bounds = canvas.getBoundingClientRect();
-      model.x = Math.max(0, Math.min(WORLD_W, (event.clientX - bounds.left) / bounds.width * WORLD_W));
+      const view = model.view || multiStageView(bounds.width, bounds.height, model.room.spawnY ?? 160);
+      model.x = Math.max(0, Math.min(WORLD_W, view.worldX(event.clientX - bounds.left)));
     };
     const dropCurrent = () => {
       if (model.room.currentPlayerId !== model.user.id || !model.room.turnDeadline) return;
@@ -475,6 +514,9 @@ export async function openMultiplayer(app, onHome, sfx) {
   return {
     destroy() {
       model.disposed = true;
+      window.removeEventListener('pageshow', onAuthReturn);
+      window.removeEventListener('focus', onAuthReturn);
+      document.removeEventListener('visibilitychange', onAuthReturn);
       model.rotationCleanup?.();
       if (model.onRotateKey) window.removeEventListener('keydown', model.onRotateKey);
       model.stream?.close();
