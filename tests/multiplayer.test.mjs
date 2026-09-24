@@ -1,8 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-const base = 'http://127.0.0.1:3001';
-const origin = 'http://127.0.0.1:5173';
+const base = process.env.TEST_BASE_URL || 'http://127.0.0.1:3001';
+const origin = process.env.TEST_ORIGIN || 'http://127.0.0.1:5173';
 
 async function request(path, options = {}) {
   const response = await fetch(`${base}${path}`, {

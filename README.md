@@ -31,9 +31,7 @@ npm run dev:server
 
 ## 個数ランキング
 
-ホームの「ランキング」から、ひとりで積んだ最高個数の上位20件を見られます。ゲームオーバー時に今回の個数を自動送信します。記録には Karotter ログインが必要で、未ログインならログイン後に送信します。各ユーザーの最高記録を1件だけ保持し、低い記録では上書きしません。ローカル開発時のテストログイン記録はメモリ上だけに保存します。
-
-試作品ではひとり用の物理演算がブラウザーで動き、送信された個数の真偽をサーバーで検証できません。正式な競争用ランキングにする場合は、サーバー側でプレイを検証する仕組みが必要です。
+ホームの「ランキング」から、ひとりで積んだ最高個数の上位20件を見られます。Karotter にログインしてゲームを始めると、サーバーが用語の順番を発行します。ゲームオーバー時は操作記録を自動送信し、サーバーが文字の当たり判定と物理演算を再現して個数を確定します。ブラウザーから個数だけを送っても記録できません。各ユーザーの最高記録を1件だけ保持し、低い記録では上書きしません。ローカル開発時のテストログイン記録はメモリ上だけに保存します。サーバーの再起動中に進行中だった一人用の記録は失効します。
 
 ## Render と OAuth
 
@@ -42,8 +40,10 @@ npm run dev:server
 Render の Web Service 作成画面から手動で設定する場合は、Root Directory を空欄、Build Command を `npm ci --include=dev && npm run build`、Start Command を `npm run start` にしてください。`NODE_ENV=production` でもビルド用の Vite をインストールするために `--include=dev` が必要です。
 
 - `PUBLIC_ORIGIN`: Render の公開 URL
+- `SESSION_SECRET`: ログイン状態を保持するための固定したランダムな文字列（Blueprint では自動生成）
 - `KAROTTER_CLIENT_ID`: Karotter OAuth アプリの Client ID
 - `KAROTTER_CLIENT_SECRET`: confidential client の場合のみ
+- `SUPABASE_URL`: 既存 Supabase プロジェクトの URL（Blueprint には設定済み）
 - `SUPABASE_SERVICE_ROLE_KEY`: 既存 Supabase プロジェクトの service role key
 
 `KAROTTER_CLIENT_SECRET` は Karotter 側で confidential client として発行した場合に設定します。Karotter の[設定ページ](https://karotter.com/settings)で OAuth アプリを作成し、コールバック URL に `https://<サービス名>.onrender.com/auth/callback` を登録してください。`PUBLIC_ORIGIN` には `https://<サービス名>.onrender.com` を設定します。認可に使うスコープは `profile` です。

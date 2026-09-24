@@ -1,4 +1,5 @@
 import { makeCompoundTextBody } from './physicsBody.js';
+import { CANONICAL_SHAPES } from './canonicalShapes.js';
 
 const emojiPattern = /[\p{Extended_Pictographic}\p{Regional_Indicator}\p{Emoji_Presentation}\u20e3]/u;
 const segmenter = new Intl.Segmenter('ja', { granularity: 'grapheme' });
@@ -76,6 +77,7 @@ function occupiedRectangles(image, cell) {
 }
 
 export function makeTextSprite(piece, stageWidth, color = '#086b9e') {
+  const canonical = CANONICAL_SHAPES[`${piece.emoji ? 'e' : 't'}:${piece.text}`];
   const maxWidth = Math.max(130, Math.min(stageWidth * .76, 510));
   const key = `${piece.text}|${piece.emoji}|${Math.round(maxWidth)}|${color}`;
   if (spriteCache.has(key)) return spriteCache.get(key);
@@ -112,14 +114,17 @@ export function makeTextSprite(piece, stageWidth, color = '#086b9e') {
     ctx.fillText(piece.text, 0, 0);
   }
 
-  const pixels = ctx.getImageData(0, 0, width, height);
   let cell = 7;
-  let rectangles = occupiedRectangles(pixels, cell);
-  while (rectangles.length > 72 && cell < 10) {
-    cell++;
+  let rectangles = canonical?.rectangles;
+  if (!rectangles) {
+    const pixels = ctx.getImageData(0, 0, width, height);
     rectangles = occupiedRectangles(pixels, cell);
+    while (rectangles.length > 72 && cell < 10) {
+      cell++;
+      rectangles = occupiedRectangles(pixels, cell);
+    }
   }
-  const sprite = { canvas, width, height, rectangles, piece, size, cell };
+  const sprite = { canvas, width: canonical?.width ?? width, height: canonical?.height ?? height, rectangles, piece, size, cell };
   spriteCache.set(key, sprite);
   return sprite;
 }

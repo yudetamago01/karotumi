@@ -4,13 +4,13 @@ import { splitTerm, makeTextSprite, makeTextBody } from './textBodies.js';
 import { openMultiplayer } from './multi.js';
 import { bindHoldRotation, rotationIcon } from './rotationControls.js';
 import { stageGeometry, TEXT_STAGE_WIDTH } from './stageGeometry.js';
-import { initialDropVelocity, PHYSICS_STEP_MS } from './dropMotion.js';
+import { applyDropGravity, PHYSICS_STEP_MS } from './dropMotion.js';
 import './style.css';
 
 const { Engine, Bodies, Body, Composite, Events } = Matter;
 const app = document.querySelector('#app');
 const inks = ['#087bb6', '#1466ad', '#0a91b9', '#456fbd', '#137e9e'];
-const API_ORIGIN = import.meta.env.DEV ? 'http://127.0.0.1:3001' : '';
+const API_ORIGIN = import.meta.env.VITE_API_ORIGIN || (import.meta.env.DEV ? 'http://127.0.0.1:3001' : '');
 
 const saved = (() => {
   try { return JSON.parse(localStorage.getItem('karotter-stack-settings') || '{}'); }
@@ -33,11 +33,12 @@ function saveSettings() { localStorage.setItem('karotter-stack-settings', JSON.s
 function escapeHtml(value) {
   return String(value ?? '').replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[char]);
 }
-async function rankingApi(path, body) {
+async function rankingApi(path, body, options = {}) {
   const response = await fetch(`${API_ORIGIN}${path}`, {
     method: body === undefined ? 'GET' : 'POST', credentials: 'include',
     headers: body === undefined ? {} : { 'Content-Type': 'application/json' },
     body: body === undefined ? undefined : JSON.stringify(body),
+    signal: options.signal,
   });
   const data = await response.json().catch(() => ({}));
   if (!response.ok) {
@@ -54,24 +55,35 @@ function retryScoreSync() {
     void syncPendingScore();
   }, 3200);
 }
-function rememberScore(count) {
-  if (!Number.isSafeInteger(count) || count < 1) return;
-  const pending = Number(localStorage.getItem('karotter-stack-ranking-pending') || 0);
-  if (count > pending) localStorage.setItem('karotter-stack-ranking-pending', String(count));
+function rememberRun(run, tickCount) {
+  if (!run) return;
+  localStorage.setItem('karotter-stack-ranking-pending', JSON.stringify({
+    runId: run.id, events: run.events,
+    endWait: Math.min(500, Math.max(0, tickCount - run.lastTick)),
+  }));
   void syncPendingScore();
 }
 function syncPendingScore() {
   if (scoreSync) return scoreSync;
-  const count = Number(localStorage.getItem('karotter-stack-ranking-pending') || 0);
-  if (!Number.isSafeInteger(count) || count < 1) return Promise.resolve(null);
-  scoreSync = rankingApi('/api/ranking', { count }).then(result => {
-    const latest = Number(localStorage.getItem('karotter-stack-ranking-pending') || 0);
-    if (latest <= count) {
+  const raw = localStorage.getItem('karotter-stack-ranking-pending');
+  if (!raw) return Promise.resolve(null);
+  let pending;
+  try { pending = JSON.parse(raw); } catch { /* Old unverified count. */ }
+  if (!pending?.runId || !Array.isArray(pending.events)) {
+    localStorage.removeItem('karotter-stack-ranking-pending');
+    return Promise.resolve(null);
+  }
+  scoreSync = rankingApi('/api/solo/finish', pending).then(result => {
+    if (localStorage.getItem('karotter-stack-ranking-pending') === raw) {
       localStorage.removeItem('karotter-stack-ranking-pending');
     } else retryScoreSync();
     return result;
   }).catch(error => {
-    if (error.status === 429) retryScoreSync();
+    if ([400, 401, 403, 404, 410].includes(error.status)) {
+      if (localStorage.getItem('karotter-stack-ranking-pending') === raw) {
+        localStorage.removeItem('karotter-stack-ranking-pending');
+      }
+    } else retryScoreSync();
     return null;
   }).finally(() => { scoreSync = null; });
   return scoreSync;
@@ -175,7 +187,7 @@ async function showRanking() {
     }
     const oauth = config?.oauthReady ? `<a class="button primary" href="${API_ORIGIN}/auth/start?next=ranking">Karotterでログイン</a>` : '';
     const devForm = config?.devLogin ? '<form id="ranking-dev-login"><label>ローカルテスト名<input name="name" maxlength="24" required placeholder="名前"></label><button class="button secondary" type="submit">テストログイン</button></form>' : '';
-    login.innerHTML = `<div class="ranking-login-actions">${oauth}${devForm}</div>${!oauth && !devForm ? '<p>ランキングへの記録にはログインが必要です。</p>' : ''}`;
+    login.innerHTML = `<div class="ranking-login-actions">${oauth}${devForm}</div>${!oauth && !devForm ? '<p>ログイン後に始めたプレイがランキングの対象です。</p>' : ''}`;
     document.querySelector('#ranking-dev-login')?.addEventListener('submit', async event => {
       event.preventDefault();
       try {
@@ -255,13 +267,22 @@ function stopGame() {
   game = null;
 }
 function dequeuePiece() {
+  if (game.ranked) {
+    const piece = game.ranked.pieces[game.ranked.index++];
+    if (piece) return piece;
+    game.ranked = null;
+  }
   if (!game.queue.length) game.queue.push(...splitTerm(game.pickTerm()));
   return game.queue.shift();
 }
 async function startGame() {
   stopGame();
   screen = 'loading';
-  await document.fonts.ready;
+  const requestedSize = { width: window.innerWidth, height: window.innerHeight };
+  const [, rankedSession] = await Promise.all([
+    document.fonts.ready,
+    rankingApi('/api/solo/start', requestedSize, { signal: AbortSignal.timeout(7000) }).catch(() => null),
+  ]);
   if (screen !== 'loading') return;
   screen = 'game';
   shell(`<canvas id="stage" aria-label="用語を積み上げるゲーム画面"></canvas>
@@ -287,6 +308,11 @@ async function startGame() {
     canvas, ctx: canvas.getContext('2d'), engine, blocks: [], active: null,
     queue: [], pickTerm: createTermPicker(), pending: null, next: null, score: 0, paused: false, over: false,
     dragPointerId: null, pendingAngle: 0,
+    ranked: rankedSession?.id ? {
+      id: rankedSession.id, pieces: rankedSession.pieces, index: 0,
+      events: [], lastTick: 0, width: requestedSize.width, height: requestedSize.height,
+    } : null,
+    tickCount: 0,
     viewScale: 1, displayScale: 1, targetX: 0, width: 0, height: 0, spawnY: 185, spawnTop: 185, topPadding: 110,
     base: null, baseWidth: 0, particles: [], resizeObserver: null, accumulator: 0,
     landing: false, landingTicks: 0, stableTicks: 0,
@@ -328,6 +354,11 @@ function sizeStage() {
   const { canvas, ctx, engine } = game;
   const rect = canvas.getBoundingClientRect();
   if (!rect.width || !rect.height) return;
+  if (game.ranked && (Math.abs(rect.width - game.ranked.width) > .5 || Math.abs(rect.height - game.ranked.height) > .5)) {
+    recordRunEvent({ type: 'resize', width: rect.width, height: rect.height });
+    game.ranked.width = rect.width;
+    game.ranked.height = rect.height;
+  }
   const oldWidth = game.width;
   const oldBaseY = game.base?.position.y;
   const geometry = stageGeometry(rect.width, rect.height);
@@ -360,6 +391,12 @@ function sizeStage() {
   }
   const highest = game.blocks.reduce((y, block) => Math.min(y, block.bounds.min.y), game.base.position.y);
   game.spawnY = Math.min(game.spawnTop, game.base.position.y - 100, ...(game.blocks.length ? [highest - 155] : []));
+}
+function recordRunEvent(event) {
+  if (!game?.ranked) return;
+  const run = game.ranked;
+  run.events.push({ ...event, wait: Math.min(500, Math.max(0, game.tickCount - run.lastTick)) });
+  run.lastTick = game.tickCount;
 }
 function onPointerMove(event) {
   if (!game || game.paused || game.over) return;
@@ -437,9 +474,7 @@ function drop() {
   const x = pendingX(sprite);
   const body = makeTextBody(sprite, x, spawnPosition());
   Body.setAngle(body, game.pendingAngle);
-  const supportY = Math.min(game.base.bounds.min.y, ...game.blocks.map(block => block.bounds.min.y));
-  const distance = Math.max(0, supportY - body.bounds.max.y);
-  Body.setVelocity(body, { x: 0, y: initialDropVelocity(distance, game.engine.gravity.y, game.engine.gravity.scale) });
+  recordRunEvent({ type: 'drop', x, angle: game.pendingAngle });
   Composite.add(game.engine.world, body);
   game.blocks.push(body);
   game.active = body;
@@ -495,7 +530,7 @@ function gameOver() {
   setRotateEnabled(false);
   sfx('over');
   stopMusic();
-  rememberScore(game.score);
+  rememberRun(game.ranked, game.tickCount);
   document.querySelector('#overlay-root').innerHTML = `<div class="overlay"><section class="modal">
     <h2>ゲームオーバー</h2><p class="result">${game.score}<span>こ</span></p>
     <p class="modal-best">ベスト ${best}</p>
@@ -537,7 +572,7 @@ function drawSprite(ctx, sprite, x, y, angle = 0, alpha = 1, offsetX = 0, offset
   ctx.shadowColor = '#2077aa55';
   ctx.shadowBlur = 5;
   ctx.shadowOffsetY = 5;
-  ctx.drawImage(sprite.canvas, offsetX - sprite.width / 2, offsetY - sprite.height / 2);
+  ctx.drawImage(sprite.canvas, offsetX - sprite.width / 2, offsetY - sprite.height / 2, sprite.width, sprite.height);
   ctx.restore();
 }
 function draw() {
@@ -604,7 +639,9 @@ function loop(now) {
   if (!game.paused && !game.over) {
     game.accumulator = Math.min(50, game.accumulator + delta);
     while (game.accumulator >= PHYSICS_STEP_MS) {
+      if (game.active && !game.landing) applyDropGravity(game.active, game.engine.gravity);
       Engine.update(game.engine, PHYSICS_STEP_MS);
+      game.tickCount++;
       settlePiece();
       game.accumulator -= PHYSICS_STEP_MS;
     }

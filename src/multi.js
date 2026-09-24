@@ -5,7 +5,7 @@ import { bindHoldRotation, rotationIcon } from './rotationControls.js';
 const colors = ['#087bb6', '#1466ad', '#0a91b9', '#456fbd', '#137e9e'];
 const WORLD_W = 1000;
 const WORLD_H = 700;
-const API_ORIGIN = import.meta.env.DEV ? 'http://127.0.0.1:3001' : '';
+const API_ORIGIN = import.meta.env.VITE_API_ORIGIN || (import.meta.env.DEV ? 'http://127.0.0.1:3001' : '');
 
 function escapeHtml(value) {
   return String(value).replace(/[&<>"']/g, character => ({

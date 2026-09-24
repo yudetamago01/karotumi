@@ -2,7 +2,7 @@ import crypto from 'node:crypto';
 import Matter from 'matter-js';
 import { createTermPicker } from '../src/termPicker.js';
 import { makeCompoundTextBody } from '../src/physicsBody.js';
-import { initialDropVelocity, PHYSICS_STEP_MS } from '../src/dropMotion.js';
+import { applyDropGravity, PHYSICS_STEP_MS } from '../src/dropMotion.js';
 
 const { Engine, Bodies, Body, Composite, Events } = Matter;
 const WORLD_WIDTH = 1000;
@@ -324,12 +324,6 @@ export function drop(room, userId, x, shape, angle = 0) {
   const center = Math.max(halfWidth + 6, Math.min(WORLD_WIDTH - halfWidth - 6, Number.isFinite(requestedX) ? requestedX : 500));
   const item = makeBody(selectedShape, center, room.spawnY);
   Body.setAngle(item.body, safeAngle);
-  const supportY = Math.min(room.base.bounds.min.y, ...room.pieces.map(piece => piece.body.bounds.min.y));
-  const distance = Math.max(0, supportY - item.body.bounds.max.y);
-  Body.setVelocity(item.body, {
-    x: 0,
-    y: initialDropVelocity(distance, room.engine.gravity.y, room.engine.gravity.scale),
-  });
   const piece = {
     id: crypto.randomUUID(), term: room.term, ownerId: userId,
     shape: selectedShape, ...item, landed: false, landingTicks: 0, stableTicks: 0,
@@ -392,7 +386,9 @@ function step(room) {
     drop(room, room.order[room.turnIndex], 500);
   }
   // Two smaller steps prevent deep glyph contacts from pushing the pile apart.
+  if (room.active && !room.active.landed) applyDropGravity(room.active.body, room.engine.gravity);
   Engine.update(room.engine, PHYSICS_STEP_MS);
+  if (room.active && !room.active.landed) applyDropGravity(room.active.body, room.engine.gravity);
   Engine.update(room.engine, PHYSICS_STEP_MS);
   for (const piece of [...room.pieces]) {
     if (piece.body.position.y > BASE_Y + 95 || piece.body.bounds.max.x < -20 || piece.body.bounds.min.x > WORLD_WIDTH + 20) {

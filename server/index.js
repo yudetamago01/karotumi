@@ -8,7 +8,8 @@ import {
   databaseReady, createRoom, getRoom, joinRoom, publicState, subscribe,
   startRoom, acceptShape, drop, chooseAfterLoss, leaveRoom, addMessage, persist,
 } from './rooms.js';
-import { leaderboard, submitScore } from './ranking.js';
+import { leaderboard } from './ranking.js';
+import { startSoloRun, finishSoloRun } from './soloRuns.js';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const port = Number(process.env.PORT || 3000);
@@ -20,7 +21,6 @@ const oauthBase = 'https://karotter.com/api/oauth';
 const oauthAuthorizeUrl = 'https://api.karotter.com/api/oauth/authorize';
 const oauthLoginUrl = 'https://api.karotter.com/login';
 const chatTimes = new Map();
-const scoreTimes = new Map();
 const assetCache = new Map();
 
 function sign(data) {
@@ -195,14 +195,20 @@ const server = http.createServer(async (req, res) => {
 
     if (pathname === '/api/ranking') {
       if (req.method === 'GET') { json(res, 200, { scores: await leaderboard() }); return; }
-      if (req.method !== 'POST') { json(res, 405, { error: 'Method not allowed' }); return; }
+      json(res, 405, { error: '記録はゲーム終了時に自動で検証されます' }); return;
+    }
+
+    if (pathname === '/api/solo/start' && req.method === 'POST') {
       const user = userFor(req);
       if (!user) { json(res, 401, { error: 'Karotterにログインしてください' }); return; }
-      if (Date.now() - (scoreTimes.get(user.id) || 0) < 3000) { json(res, 429, { error: '少し待ってから送信してください' }); return; }
       const input = await bodyJson(req);
-      const result = await submitScore(user, input.count);
-      scoreTimes.set(user.id, Date.now());
-      json(res, 200, result); return;
+      json(res, 201, startSoloRun(user, input)); return;
+    }
+    if (pathname === '/api/solo/finish' && req.method === 'POST') {
+      const user = userFor(req);
+      if (!user) { json(res, 401, { error: 'Karotterにログインしてください' }); return; }
+      const input = await bodyJson(req);
+      json(res, 200, await finishSoloRun(user, input)); return;
     }
 
     if (pathname.startsWith('/api/rooms')) {
