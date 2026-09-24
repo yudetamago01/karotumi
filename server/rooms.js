@@ -5,6 +5,7 @@ import { makeCompoundTextBody } from '../src/physicsBody.js';
 import { applyDropGravity, PHYSICS_STEP_MS } from '../src/dropMotion.js';
 import { CANONICAL_SHAPES } from '../src/canonicalShapes.js';
 import { stageGeometry } from '../src/stageGeometry.js';
+import { isLost } from '../src/lossRules.js';
 
 const { Engine, Bodies, Body, Composite, Events } = Matter;
 const MAX_PLAYERS = 10;
@@ -48,10 +49,12 @@ function serialize(room) {
     id: room.id, phase: room.phase, hostId: room.hostId, leaderId: room.hostId,
     members: [...room.members.values()], order: room.order,
     turnIndex: room.turnIndex, term: room.term, turnDeadline: room.turnDeadline,
-    spawnY: room.spawnY, geometry: room.geometry, winnerId: room.winnerId, activeId: room.active?.id || null,
+    spawnY: room.spawnY, geometry: room.geometry, winnerId: room.winnerId,
+    activeId: room.active?.id || null, activeLanded: Boolean(room.active?.landed),
     pieces: room.pieces.map(p => ({
       id: p.id, term: p.term, ownerId: p.ownerId,
       x: p.body.position.x, y: p.body.position.y, angle: p.body.angle,
+      vx: p.body.velocity.x, vy: p.body.velocity.y, va: p.body.angularVelocity,
       offsetX: p.offsetX, offsetY: p.offsetY,
     })),
     messages: room.messages.slice(-50),
@@ -77,7 +80,7 @@ function hydrate(row) {
     hostId: data.hostId || data.leaderId, members: new Map((data.members || []).map(m => [m.id, { ...m, avatar: m.avatar || null }])),
     order: data.order, turnIndex: data.turnIndex, term: data.term,
     turnDeadline: data.turnDeadline, spawnY: data.spawnY,
-    winnerId: data.winnerId, pieces: [], messages: data.messages || [], geometry: null,
+    winnerId: data.winnerId, pieces: [], messages: data.messages || [], geometry: null, lastDropOwnerId: null,
     active: null, listeners: new Set(), dirty: false,
     lastPersist: Date.now(), persistChain: Promise.resolve(), resetTimer: null,
   };
@@ -161,7 +164,7 @@ export async function createRoom(user, password = '') {
     phase: 'lobby', hostId: user.id,
     members: new Map([[user.id, { id: user.id, name: user.name, avatar: user.avatar || null, status: 'playing' }]]),
     order: [user.id], turnIndex: -1, term: null, turnDeadline: 0,
-    spawnY: 160, winnerId: null, pieces: [], messages: [], geometry: null,
+    spawnY: 160, winnerId: null, pieces: [], messages: [], geometry: null, lastDropOwnerId: null,
     active: null, listeners: new Set(), dirty: true, resetTimer: null,
     lastPersist: 0, persistChain: Promise.resolve(),
   };
@@ -256,6 +259,7 @@ function resetToLobby(room) {
   room.turnDeadline = 0;
   room.spawnY = 160;
   room.geometry = null;
+  room.lastDropOwnerId = null;
   room.winnerId = null;
   room.pieces = [];
   room.active = null;
@@ -299,6 +303,7 @@ export function startRoom(room, user, viewport = {}) {
     height >= 320 && height <= 2400 ? height : 700,
   );
   room.spawnY = Math.min(room.geometry.spawnTop, room.geometry.baseY - 100);
+  room.lastDropOwnerId = null;
   room.physicsTime = performance.now();
   room.physicsAccumulator = 0;
   room.pickTerm = createTermPicker();
@@ -328,6 +333,7 @@ export function drop(room, userId, x, _shape, angle = 0) {
   };
   room.pieces.push(piece);
   room.active = piece;
+  room.lastDropOwnerId = userId;
   Composite.add(room.engine.world, piece.body);
   room.turnDeadline = 0;
   publish(room);
@@ -402,15 +408,18 @@ function stepPhysics(room) {
 }
 
 function checkLoss(room) {
-  const leftLimit = room.base.bounds.min.x - 120;
-  const rightLimit = room.base.bounds.max.x + 120;
-  for (const piece of [...room.pieces]) {
-    if (piece.body.position.y > room.geometry.baseY + 95 || piece.body.bounds.max.x < leftLimit || piece.body.bounds.min.x > rightLimit) {
-      Composite.remove(room.engine.world, piece.body);
-      room.pieces = room.pieces.filter(p => p !== piece);
-      eliminate(room, piece.ownerId);
-    }
-  }
+  const fallen = room.pieces.find(piece => isLost(piece.body, room.base));
+  if (!fallen) return;
+  // A collapse belongs to the person whose drop caused it, even when an
+  // older word is the first one to leave the plate. Start the next survivor
+  // on a clear plate instead of leaving invisible/fallen supports behind.
+  const loserId = room.active?.ownerId || room.lastDropOwnerId || fallen.ownerId;
+  room.pieces = [];
+  room.active = null;
+  room.spawnY = room.geometry.spawnTop;
+  room.lastDropOwnerId = null;
+  makeEngine(room);
+  eliminate(room, loserId);
 }
 
 export function advanceRoomPhysics(room, now = performance.now()) {
@@ -421,8 +430,8 @@ export function advanceRoomPhysics(room, now = performance.now()) {
   while (room.phase === 'playing' && room.physicsAccumulator >= PHYSICS_STEP_MS) {
     stepPhysics(room);
     room.physicsAccumulator -= PHYSICS_STEP_MS;
+    if (room.phase === 'playing') checkLoss(room);
   }
-  if (room.phase === 'playing') checkLoss(room);
 }
 
 setInterval(() => {
@@ -431,11 +440,11 @@ setInterval(() => {
       if (room.phase === 'playing') {
         advanceRoomPhysics(room);
         const now = Date.now();
-        if (room.listeners.size && now - (room.lastBroadcast || 0) >= 166) {
+        if (room.listeners.size && now - (room.lastBroadcast || 0) >= 500) {
           room.lastBroadcast = now;
           room.lastActiveBroadcast = now;
           broadcastTick(room);
-        } else if (room.listeners.size && room.active && now - (room.lastActiveBroadcast || 0) >= 50) {
+        } else if (room.listeners.size && room.active && now - (room.lastActiveBroadcast || 0) >= 200) {
           room.lastActiveBroadcast = now;
           broadcastTick(room, true);
         }

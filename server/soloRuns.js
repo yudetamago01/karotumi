@@ -6,6 +6,7 @@ import { CANONICAL_SHAPES } from '../src/canonicalShapes.js';
 import { makeCompoundTextBody } from '../src/physicsBody.js';
 import { stageGeometry } from '../src/stageGeometry.js';
 import { applyDropGravity, PHYSICS_STEP_MS } from '../src/dropMotion.js';
+import { isLost } from '../src/lossRules.js';
 import { submitScore } from './ranking.js';
 
 const { Engine, Bodies, Body, Composite, Events } = Matter;
@@ -117,10 +118,7 @@ function stepReplay(replay) {
       replay.spawnY = Math.min(replay.geometry.spawnTop, highest - 155);
     }
   }
-  const leftLimit = replay.base.bounds.min.x - 120;
-  const rightLimit = replay.base.bounds.max.x + 120;
-  replay.over = replay.pieces.some(body => body.position.y > replay.base.position.y + 95 ||
-    body.bounds.max.x < leftLimit || body.bounds.min.x > rightLimit);
+  replay.over = replay.pieces.some(body => isLost(body, replay.base));
 }
 
 async function verifyReplay(run, input) {

@@ -1,22 +1,21 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import Matter from 'matter-js';
-import { advanceRoomPhysics, drop, startRoom } from '../server/rooms.js';
+import { advanceRoomPhysics, drop, publicState, startRoom } from '../server/rooms.js';
 import { CANONICAL_SHAPES } from '../src/canonicalShapes.js';
 import { makeCompoundTextBody } from '../src/physicsBody.js';
 import { applyDropGravity, PHYSICS_STEP_MS } from '../src/dropMotion.js';
 import { stageGeometry } from '../src/stageGeometry.js';
+import { MultiPhysicsView } from '../src/multiPhysicsView.js';
+import { isLost } from '../src/lossRules.js';
 
 const { Engine, Bodies, Composite, Events } = Matter;
 
-function newRoom(viewport) {
+function newRoom(viewport, ids = ['a', 'b']) {
   const room = {
     id: 'TEST', phase: 'lobby', hostId: 'a',
-    members: new Map([
-      ['a', { id: 'a', name: 'A', status: 'playing' }],
-      ['b', { id: 'b', name: 'B', status: 'playing' }],
-    ]),
-    order: ['a', 'b'], turnIndex: -1, term: null, turnDeadline: 0,
+    members: new Map(ids.map(id => [id, { id, name: id, status: 'playing' }])),
+    order: ids, turnIndex: -1, term: null, turnDeadline: 0,
     spawnY: 160, pieces: [], messages: [], listeners: new Set(),
   };
   startRoom(room, { id: 'a' }, viewport);
@@ -101,4 +100,67 @@ test('a word that misses the solo plate boundary eliminates its owner', () => {
   }
   assert.equal(room.members.get(owner).status, 'eliminated');
   assert.equal(room.phase, 'ended');
+});
+
+test('a collapsing older word eliminates the current dropper and clears the plate', () => {
+  const room = newRoom({ width: 1290, height: 900 }, ['a', 'b', 'c']);
+  room.term = 'カロート';
+  drop(room, room.order[room.turnIndex], room.geometry.width / 2);
+  for (let frame = 0; frame < 250 && room.active; frame++) {
+    advanceRoomPhysics(room, room.physicsTime + PHYSICS_STEP_MS * 2);
+  }
+  assert.equal(room.active, null);
+  assert.equal(room.pieces.length, 1);
+  const previous = room.pieces[0].body;
+  const current = room.order[room.turnIndex];
+  room.term = 'RK';
+  drop(room, current, room.geometry.width / 2);
+  Matter.Body.setPosition(previous, { x: room.geometry.width / 2, y: room.geometry.baseY + 120 });
+  advanceRoomPhysics(room, room.physicsTime + PHYSICS_STEP_MS * 2);
+  assert.equal(room.members.get(current).status, 'eliminated');
+  assert.equal(room.members.get('a').status, 'playing');
+  assert.equal(room.phase, 'playing');
+  assert.equal(room.pieces.length, 0);
+  assert.equal(room.active, null);
+  assert.notEqual(room.order[room.turnIndex], current);
+});
+
+test('a tilted word below the plate ends the turn before its whole mask passes below', () => {
+  const room = newRoom({ width: 1290, height: 900 });
+  room.term = 'カロート';
+  const owner = room.order[room.turnIndex];
+  drop(room, owner, room.geometry.width / 2);
+  const body = room.pieces[0].body;
+  Matter.Body.setAngle(body, Math.PI / 2);
+  Matter.Body.setPosition(body, { x: room.geometry.width / 2, y: room.base.bounds.max.y + 20 });
+  assert.ok(body.bounds.min.y < room.base.bounds.min.y, 'a tall glyph still extends above the plate');
+  assert.equal(isLost(body, room.base), true);
+});
+
+test('local multiplayer motion matches the server and predicts an immediate drop', () => {
+  const room = newRoom({ width: 390, height: 700 });
+  room.term = 'カロート';
+  const owner = room.order[room.turnIndex];
+  const x = room.geometry.width / 2;
+  const view = new MultiPhysicsView(room.geometry);
+  view.step(0);
+  const predicted = view.predict(room.term, owner, x, room.spawnY, 0);
+  assert.ok(predicted, 'the release is visible before the HTTP response');
+  drop(room, owner, x);
+  const state = publicState(room, owner);
+  view.sync(state);
+  assert.equal(view.predictedId, null);
+  assert.equal(view.pieces.size, 1, 'prediction is reused when the server confirms it');
+  for (let frame = 1; frame <= 80; frame++) {
+    const now = frame * PHYSICS_STEP_MS * 2;
+    advanceRoomPhysics(room, room.physicsTime + PHYSICS_STEP_MS * 2);
+    view.step(now);
+    const actual = room.pieces[0].body;
+    const visible = view.pose(room.pieces[0].id);
+    assert.ok(Math.abs(view.engine.timing.timestamp - room.engine.timing.timestamp) <= PHYSICS_STEP_MS + .001);
+    if (Math.abs(view.engine.timing.timestamp - room.engine.timing.timestamp) < .001) {
+      assert.ok(Math.abs(visible.x - actual.position.x) < .001, `frame ${frame}: x`);
+      assert.ok(Math.abs(visible.y - actual.position.y) < .001, `frame ${frame}: y`);
+    }
+  }
 });

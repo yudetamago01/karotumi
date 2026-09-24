@@ -5,6 +5,7 @@ import { openMultiplayer } from './multi.js';
 import { bindHoldRotation, rotationIcon } from './rotationControls.js';
 import { stageGeometry, TEXT_STAGE_WIDTH } from './stageGeometry.js';
 import { applyDropGravity, PHYSICS_STEP_MS } from './dropMotion.js';
+import { isLost } from './lossRules.js';
 import './style.css';
 
 const { Engine, Bodies, Body, Composite, Events } = Matter;
@@ -540,10 +541,8 @@ function settlePiece() {
 }
 function checkLoss() {
   if (!game || game.over) return;
-  const leftLimit = game.base.bounds.min.x - 120;
-  const rightLimit = game.base.bounds.max.x + 120;
   for (const body of game.blocks) {
-    if (body.position.y > game.base.position.y + 95 || body.bounds.max.x < leftLimit || body.bounds.min.x > rightLimit) {
+    if (isLost(body, game.base)) {
       gameOver();
       break;
     }

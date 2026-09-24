@@ -3,6 +3,7 @@ import { TERM_DEFINITIONS } from './termDefinitions.js';
 import { bindHoldRotation, rotationIcon } from './rotationControls.js';
 import { multiStageView } from './multiStageView.js';
 import { TEXT_STAGE_WIDTH, stageGeometry } from './stageGeometry.js';
+import { MultiPhysicsView } from './multiPhysicsView.js';
 
 const colors = ['#087bb6', '#1466ad', '#0a91b9', '#456fbd', '#137e9e'];
 const API_ORIGIN = import.meta.env.VITE_API_ORIGIN || (import.meta.env.DEV ? 'http://127.0.0.1:3001' : '');
@@ -37,8 +38,8 @@ export async function openMultiplayer(app, onHome, sfx) {
   await document.fonts.ready;
   const model = {
     config: null, user: null, room: null, stream: null, frame: 0,
-    disposed: false, x: 500, rotation: 0, dragPointerId: null, drawn: [], display: new Map(),
-    sprites: new Map(), lastDraw: 0, lastReconnectProbe: 0, lastShapeTerm: null, chatCount: 0, notice: '', dropPending: false,
+    disposed: false, x: 500, rotation: 0, dragPointerId: null, drawn: [], visual: null,
+    sprites: new Map(), lastReconnectProbe: 0, lastShapeTerm: null, chatCount: 0, notice: '', dropPending: false,
     authCheckInFlight: false, cameraScale: null, cameraSize: '',
   };
 
@@ -46,6 +47,8 @@ export async function openMultiplayer(app, onHome, sfx) {
     model.notice = message;
     const target = app.querySelector('#multi-notice');
     if (target) target.textContent = message;
+    const toast = app.querySelector('#multi-toast');
+    if (toast) toast.textContent = message;
   };
 
   async function run(action) {
@@ -177,7 +180,6 @@ export async function openMultiplayer(app, onHome, sfx) {
     const room = model.room;
     if (!room || !app.querySelector('#multi-stage')) return;
     if (room.phase === 'lobby') {
-      model.display.clear();
       model.drawn = [];
       model.lastShapeTerm = null;
     }
@@ -193,7 +195,7 @@ export async function openMultiplayer(app, onHome, sfx) {
     const leaderId = room.leaderId || room.hostId;
     const leader = room.members.find(m => m.id === leaderId);
     app.querySelector('#leader-name').textContent = leader ? `ゲームリーダー：${leader.name}` : '';
-    const ownTurn = room.phase === 'playing' && room.currentPlayerId === model.user.id && me?.status === 'playing' && room.turnDeadline > 0;
+    const ownTurn = room.phase === 'playing' && room.currentPlayerId === model.user.id && me?.status === 'playing' && room.turnDeadline > 0 && !model.dropPending;
     app.querySelector('#drop-help').textContent = ownTurn
       ? (matchMedia('(pointer: coarse)').matches ? '指で動かし、離すと落下' : 'Q/E またはボタンで回転・クリックで落とす') : '';
     app.querySelector('#multi-rotate-left').disabled = !ownTurn;
@@ -219,15 +221,23 @@ export async function openMultiplayer(app, onHome, sfx) {
     return sprite;
   }
 
+  function setRoom(next) {
+    const matchStarting = model.room?.phase === 'lobby' && next.phase === 'playing';
+    model.room = next;
+    const geometry = next.geometry;
+    if (geometry && (!model.visual || model.visual.geometry.width !== geometry.width || model.visual.geometry.height !== geometry.height)) {
+      model.visual = new MultiPhysicsView(geometry);
+    }
+    model.visual?.sync(next);
+    if (matchStarting && window.innerWidth <= 650) {
+      app.querySelector('.multi-room')?.classList.remove('side-open');
+      app.querySelector('#multi-side-toggle')?.setAttribute('aria-expanded', 'false');
+    }
+  }
+
   function gameFrame(now = performance.now()) {
     if (model.disposed || !model.room || !app.querySelector('#multi-stage')) return;
-    // The falling word arrives at 20Hz; the rest of the pile arrives at 6Hz.
-    // Keep rendering at 30fps so large piles remain light on phones.
-    if (now - model.lastDraw < 33) {
-      model.frame = requestAnimationFrame(gameFrame);
-      return;
-    }
-    model.lastDraw = now;
+    model.visual?.step(now);
     const canvas = app.querySelector('#multi-stage');
     const ctx = canvas.getContext('2d');
     const rect = canvas.getBoundingClientRect();
@@ -258,7 +268,7 @@ export async function openMultiplayer(app, onHome, sfx) {
     ctx.fill(); ctx.stroke();
     const room = model.room;
     const ownTurn = room.phase === 'playing' && room.currentPlayerId === model.user.id && room.turnDeadline > 0;
-    if (ownTurn && room.term) {
+    if (ownTurn && room.term && !model.dropPending) {
       const sprite = spriteFor(room.term);
       const rotatedHalfWidth = Math.abs(Math.cos(model.rotation)) * sprite.width / 2 + Math.abs(Math.sin(model.rotation)) * sprite.height / 2;
       const x = Math.max(rotatedHalfWidth + 6, Math.min(geometry.width - rotatedHalfWidth - 6, model.x));
@@ -271,30 +281,28 @@ export async function openMultiplayer(app, onHome, sfx) {
       ctx.globalAlpha = 1;
     }
     model.drawn = [];
-    for (const [index, piece] of room.pieces.entries()) {
+    const pieces = [...room.pieces];
+    const predicted = model.visual?.pieces.get(model.visual.predictedId);
+    if (predicted) pieces.push(predicted);
+    for (const [index, piece] of pieces.entries()) {
       const sprite = spriteFor(piece.term);
-      const previous = model.display.get(piece.id) || { x: piece.x, y: piece.y, angle: piece.angle };
-      const follow = piece.id === room.activeId ? .7 : .35;
-      previous.x += (piece.x - previous.x) * follow;
-      previous.y += (piece.y - previous.y) * follow;
-      previous.angle += (piece.angle - previous.angle) * follow;
-      model.display.set(piece.id, previous);
-      const sx = wx(previous.x);
-      const sy = wy(previous.y);
-      const cosine = Math.cos(previous.angle);
-      const sine = Math.sin(previous.angle);
+      const pose = model.visual?.pose(piece.id) || piece;
+      const sx = wx(pose.x);
+      const sy = wy(pose.y);
+      const cosine = Math.cos(pose.angle);
+      const sine = Math.sin(pose.angle);
       const renderedHeight = (Math.abs(cosine) * sprite.height + Math.abs(sine) * sprite.width) * scale;
       if (sy + renderedHeight / 2 < -80 || sy - renderedHeight / 2 > rect.height + 80) continue;
       ctx.save();
       ctx.translate(sx, sy);
-      ctx.rotate(previous.angle);
+      ctx.rotate(pose.angle);
       ctx.drawImage(sprite.canvas, (piece.offsetX - sprite.width / 2) * scale, (piece.offsetY - sprite.height / 2) * scale, sprite.width * scale, sprite.height * scale);
       ctx.restore();
       model.drawn.push({
         term: piece.term,
         x: sx + (piece.offsetX * cosine - piece.offsetY * sine) * scale,
         y: sy + (piece.offsetX * sine + piece.offsetY * cosine) * scale,
-        w: sprite.width * scale, h: sprite.height * scale, angle: previous.angle, index,
+        w: sprite.width * scale, h: sprite.height * scale, angle: pose.angle, index,
       });
     }
     const timer = app.querySelector('#turn-timer');
@@ -307,22 +315,22 @@ export async function openMultiplayer(app, onHome, sfx) {
     model.rotationCleanup = null;
     if (model.onRotateKey) window.removeEventListener('keydown', model.onRotateKey);
     model.onRotateKey = null;
-    model.room = room;
+    setRoom(room);
     model.x = room.geometry?.width / 2 || 500;
     model.dropPending = false;
     model.view = null;
     model.cameraScale = null;
-    model.display.clear();
     model.lastShapeTerm = null;
     model.chatCount = 0;
     model.stream?.close();
     cancelAnimationFrame(model.frame);
     history.replaceState(null, '', `/?room=${encodeURIComponent(room.id)}`);
-    app.innerHTML = `<main class="app-shell multi-room">
+    app.innerHTML = `<main class="app-shell multi-room${window.innerWidth >= 1320 ? ' side-open' : ''}">
       <section class="multi-field">
         <header class="multi-hud">
           <div class="multi-pill">ROOM <strong id="room-id"></strong> <button class="tiny-button" id="copy-id">コピー</button></div>
           <div class="multi-pill" id="room-phase"></div>
+          <button class="multi-side-toggle" id="multi-side-toggle" type="button" aria-controls="multi-side" aria-expanded="${window.innerWidth >= 1320}">チャット</button>
           <div class="multi-pill" id="turn-timer">—</div>
         </header>
         <canvas id="multi-stage" aria-label="みんなで積むゲーム画面"></canvas>
@@ -331,7 +339,7 @@ export async function openMultiplayer(app, onHome, sfx) {
         <div id="winner-banner" class="winner-banner" hidden></div>
         <div id="loss-choice" class="loss-choice" hidden><strong>脱落しました</strong><button class="button primary" id="watch-btn">観戦する</button><button class="button secondary" id="exit-btn">退出する</button></div>
       </section>
-      <aside class="multi-side">
+      <aside class="multi-side" id="multi-side">
         <div class="multi-side-head"><button class="member-toggle" id="member-toggle" type="button" aria-controls="multi-members" aria-expanded="false">メンバー <span id="member-count">0・観戦0</span></button><div class="member-heading"><strong>メンバー</strong><small id="leader-name"></small></div><button class="tiny-button" id="leave-btn">退出</button></div>
         <div class="multi-members" id="multi-members"><div class="member-group"><h3>プレイ中</h3><ul id="playing-list"></ul></div>
         <div class="member-group"><h3>観戦中</h3><ul id="watching-list"></ul></div></div>
@@ -341,9 +349,15 @@ export async function openMultiplayer(app, onHome, sfx) {
         </section>
         <p id="multi-notice" class="multi-notice" role="status"></p>
       </aside>
+      <p id="multi-toast" class="multi-toast" role="status"></p>
       <div id="term-dialog" class="term-dialog" hidden><section><button id="close-term" aria-label="閉じる">×</button><h2 id="term-title"></h2><p id="term-description"></p></section></div>
       <div id="leave-dialog" class="term-dialog" hidden><section class="leave-confirm"><h2>ルームから退出しますか？</h2><p>参加中のルームから退出します。</p><div><button id="cancel-leave" class="button secondary">キャンセル</button><button id="confirm-leave" class="button primary">退出する</button></div></section></div>
     </main>`;
+    app.querySelector('#multi-side-toggle').addEventListener('click', event => {
+      const open = app.querySelector('.multi-room').classList.toggle('side-open');
+      event.currentTarget.setAttribute('aria-expanded', String(open));
+      sfx('tap');
+    });
     const leaveDialog = app.querySelector('#leave-dialog');
     const memberToggle = app.querySelector('#member-toggle');
     const memberPanel = app.querySelector('#multi-members');
@@ -367,12 +381,12 @@ export async function openMultiplayer(app, onHome, sfx) {
     app.querySelector('#copy-id').addEventListener('click', () => navigator.clipboard.writeText(room.id).then(() => showError('ルームIDをコピーしました')).catch(() => showError('コピーできませんでした')));
     app.querySelector('#start-room').addEventListener('click', () => { sfx('tap'); run(async () => {
       const bounds = app.querySelector('#multi-stage').getBoundingClientRect();
-      model.room = (await api(`/api/rooms/${room.id}/start`, { viewport: { width: bounds.width, height: bounds.height } })).room;
+      setRoom((await api(`/api/rooms/${room.id}/start`, { viewport: { width: bounds.width, height: bounds.height } })).room);
       model.x = model.room.geometry.width / 2;
       model.cameraScale = null;
       renderRoomState();
     }); });
-    app.querySelector('#watch-btn').addEventListener('click', () => run(async () => { model.room = (await api(`/api/rooms/${room.id}/choice`, { choice: 'watching' })).room; renderRoomState(); }));
+    app.querySelector('#watch-btn').addEventListener('click', () => run(async () => { setRoom((await api(`/api/rooms/${room.id}/choice`, { choice: 'watching' })).room); renderRoomState(); }));
     app.querySelector('#exit-btn').addEventListener('click', requestLeave);
     app.querySelector('#chat-form').addEventListener('submit', event => {
       event.preventDefault();
@@ -412,9 +426,16 @@ export async function openMultiplayer(app, onHome, sfx) {
     const dropCurrent = () => {
       if (model.dropPending || model.room.currentPlayerId !== model.user.id || !model.room.turnDeadline) return;
       model.dropPending = true;
-      run(async () => {
-        model.room = (await api(`/api/rooms/${room.id}/drop`, { x: model.x, angle: model.rotation })).room;
-        renderRoomState(); sfx('multi-drop');
+      model.visual?.predict(model.room.term, model.user.id, model.x, model.room.spawnY, model.rotation);
+      sfx('multi-drop');
+      renderRoomState();
+      api(`/api/rooms/${room.id}/drop`, { x: model.x, angle: model.rotation }).then(({ room: next }) => {
+        setRoom(next);
+        renderRoomState();
+        showError('');
+      }).catch(error => {
+        model.visual?.clearPrediction();
+        showError(error.message);
       }).finally(() => { model.dropPending = false; });
     };
     canvas.addEventListener('pointermove', event => {
@@ -470,7 +491,7 @@ export async function openMultiplayer(app, onHome, sfx) {
         model.x = next.geometry?.width / 2 || 500;
         model.cameraScale = null;
       }
-      model.room = next;
+      setRoom(next);
       renderRoomState();
     });
     model.stream.addEventListener('chat', event => {
@@ -494,7 +515,7 @@ export async function openMultiplayer(app, onHome, sfx) {
       if (Date.now() - model.lastReconnectProbe < 3000) return;
       model.lastReconnectProbe = Date.now();
       api(`/api/rooms/${room.id}`).then(({ room: freshRoom }) => {
-        model.room = freshRoom;
+        setRoom(freshRoom);
         renderRoomState();
       }).catch(error => {
         if (!/見つかりません/.test(error.message)) return;
