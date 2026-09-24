@@ -160,7 +160,7 @@ button:focus-visible, a:focus-visible, input:focus-visible {
   min-height: 96px;
   display: flex;
   align-items: flex-start;
-  justify-content: space-between;
+  justify-content: flex-end;
   gap: 14px;
   padding: 18px 22px;
   pointer-events: none;
@@ -187,6 +187,12 @@ button:focus-visible, a:focus-visible, input:focus-visible {
   display: grid;
   grid-template-columns: 1fr 1.65fr 1fr;
   gap: 10px;
+}
+.game-hud .stats {
+  position: absolute;
+  left: 50%;
+  width: min(670px, calc(100% - 112px));
+  transform: translateX(-50%);
 }
 .stat {
   display: flex;
