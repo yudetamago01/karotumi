@@ -36,7 +36,7 @@ export async function openMultiplayer(app, onHome, sfx) {
   await document.fonts.ready;
   const model = {
     config: null, user: null, room: null, stream: null, frame: 0,
-    disposed: false, x: 500, drawn: [], display: new Map(),
+    disposed: false, x: 500, dragPointerId: null, drawn: [], display: new Map(),
     sprites: new Map(), lastDraw: 0, lastReconnectProbe: 0, lastShapeTerm: null, chatCount: 0, notice: '',
   };
 
@@ -53,6 +53,7 @@ export async function openMultiplayer(app, onHome, sfx) {
 
   function renderEntry() {
     if (model.disposed) return;
+    model.dragPointerId = null;
     model.stream?.close();
     model.stream = null;
     cancelAnimationFrame(model.frame);
@@ -216,7 +217,7 @@ export async function openMultiplayer(app, onHome, sfx) {
     ctx.strokeStyle = '#176eaa';
     ctx.lineWidth = 3;
     ctx.beginPath();
-    ctx.roundRect(wx(190), wy(636), wx(620), 28 * scale, 14 * scale);
+    ctx.roundRect(wx(150), wy(636), wx(700), 28 * scale, 14 * scale);
     ctx.fill(); ctx.stroke();
     const room = model.room;
     const ownTurn = room.phase === 'playing' && room.currentPlayerId === model.user.id && room.turnDeadline > 0;
@@ -307,9 +308,21 @@ export async function openMultiplayer(app, onHome, sfx) {
       run(async () => { await api(`/api/rooms/${room.id}/chat`, { body: text }); form.reset(); });
     });
     const canvas = app.querySelector('#multi-stage');
-    canvas.addEventListener('pointermove', event => {
+    const movePointer = event => {
       const bounds = canvas.getBoundingClientRect();
-      model.x = (event.clientX - bounds.left) / bounds.width * WORLD_W;
+      model.x = Math.max(0, Math.min(WORLD_W, (event.clientX - bounds.left) / bounds.width * WORLD_W));
+    };
+    const dropCurrent = () => {
+      if (model.room.currentPlayerId !== model.user.id || !model.room.turnDeadline) return;
+      const term = model.room.term;
+      const sprite = spriteFor(term);
+      run(async () => {
+        model.room = (await api(`/api/rooms/${room.id}/drop`, { x: model.x, shape: shapeFor(term, sprite) })).room;
+        renderRoomState(); sfx('drop');
+      });
+    };
+    canvas.addEventListener('pointermove', event => {
+      if (event.pointerType === 'mouse' || model.dragPointerId === event.pointerId) movePointer(event);
     });
     canvas.addEventListener('pointerdown', event => {
       const me = model.room.members.find(m => m.id === model.user.id);
@@ -323,14 +336,27 @@ export async function openMultiplayer(app, onHome, sfx) {
         return;
       }
       if (model.room.currentPlayerId !== model.user.id || !model.room.turnDeadline) return;
-      const bounds = canvas.getBoundingClientRect();
-      model.x = (event.clientX - bounds.left) / bounds.width * WORLD_W;
-      const sprite = spriteFor(model.room.term);
-      run(async () => {
-        model.room = (await api(`/api/rooms/${room.id}/drop`, { x: model.x, shape: shapeFor(model.room.term, sprite) })).room;
-        renderRoomState(); sfx('drop');
-      });
+      event.preventDefault();
+      if (event.pointerType !== 'mouse') {
+        if (model.dragPointerId !== null) return;
+        model.dragPointerId = event.pointerId;
+        canvas.setPointerCapture(event.pointerId);
+      }
+      movePointer(event);
+      if (event.pointerType === 'mouse') dropCurrent();
     });
+    canvas.addEventListener('pointerup', event => {
+      if (model.dragPointerId !== event.pointerId) return;
+      movePointer(event);
+      model.dragPointerId = null;
+      if (canvas.hasPointerCapture(event.pointerId)) canvas.releasePointerCapture(event.pointerId);
+      dropCurrent();
+    });
+    const cancelDrag = event => {
+      if (model.dragPointerId === event.pointerId) model.dragPointerId = null;
+    };
+    canvas.addEventListener('pointercancel', cancelDrag);
+    canvas.addEventListener('lostpointercapture', cancelDrag);
     app.querySelector('#close-term').addEventListener('click', () => { app.querySelector('#term-dialog').hidden = true; });
     app.querySelector('#term-dialog').addEventListener('click', event => { if (event.target.id === 'term-dialog') event.currentTarget.hidden = true; });
     model.stream = new EventSource(`${API_ORIGIN}/api/rooms/${room.id}/events`, { withCredentials: true });

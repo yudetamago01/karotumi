@@ -3,7 +3,7 @@ import Matter from 'matter-js';
 import { createTermPicker } from '../src/termPicker.js';
 import { makeCompoundTextBody } from '../src/physicsBody.js';
 
-const { Engine, Bodies, Composite, Events, Sleeping } = Matter;
+const { Engine, Bodies, Composite, Events } = Matter;
 const WORLD_WIDTH = 1000;
 const BASE_Y = 650;
 const MAX_PLAYERS = 10;
@@ -14,13 +14,12 @@ let lastCleanup = 0;
 
 function makeEngine(room) {
   const engine = Engine.create({ gravity: { x: 0, y: 1.15 }, enableSleeping: true });
-  // Multiplayer runs on the server, so keep the solver deliberately light.
-  // The text masks still preserve their gaps, while sleeping bodies avoid
-  // re-solving the whole pile during another player's fall.
-  engine.positionIterations = 6;
-  engine.velocityIterations = 6;
-  engine.constraintIterations = 2;
-  const base = Bodies.rectangle(500, BASE_Y, 620, 28, { isStatic: true, label: 'base', friction: 1.1 });
+  // Narrow glyph parts need the same solver precision as solo play. Matter
+  // sleeps resting pieces naturally after their contacts have settled.
+  engine.positionIterations = 10;
+  engine.velocityIterations = 10;
+  engine.constraintIterations = 4;
+  const base = Bodies.rectangle(500, BASE_Y, 700, 28, { isStatic: true, label: 'base', friction: 1.1 });
   Composite.add(engine.world, base);
   room.engine = engine;
   room.base = base;
@@ -381,9 +380,9 @@ function step(room) {
   if (!room.active && room.turnDeadline && Date.now() >= room.turnDeadline) {
     drop(room, room.order[room.turnIndex], 500);
   }
-  // One full step is equivalent to the old pair of half steps and removes
-  // one broadphase/solver pass for every multiplayer frame.
-  Engine.update(room.engine, 16.666);
+  // Two smaller steps prevent deep glyph contacts from pushing the pile apart.
+  Engine.update(room.engine, 8.333);
+  Engine.update(room.engine, 8.333);
   for (const piece of [...room.pieces]) {
     if (piece.body.position.y > BASE_Y + 95 || piece.body.bounds.max.x < -20 || piece.body.bounds.min.x > WORLD_WIDTH + 20) {
       Composite.remove(room.engine.world, piece.body);
@@ -397,7 +396,8 @@ function step(room) {
     if (piece.body.speed < .65 && piece.body.angularSpeed < .025) piece.stableTicks += 2;
     else piece.stableTicks = 0;
     if (piece.landingTicks >= 30 && (piece.stableTicks >= 16 || piece.landingTicks >= 170)) {
-      if (piece.stableTicks >= 16) Sleeping.set(piece.body, true);
+      // Advancing the turn must not force this piece asleep while it still
+      // has unresolved contacts with the letters below it.
       room.active = null;
       const highest = room.pieces.reduce((y, p) => Math.min(y, p.body.bounds.min.y), BASE_Y);
       room.spawnY = Math.min(160, highest - 155);

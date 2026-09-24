@@ -4,7 +4,7 @@ import { splitTerm, makeTextSprite, makeTextBody } from './textBodies.js';
 import { openMultiplayer } from './multi.js';
 import './style.css';
 
-const { Engine, Bodies, Body, Composite, Events, Sleeping } = Matter;
+const { Engine, Bodies, Body, Composite, Events } = Matter;
 const app = document.querySelector('#app');
 const inks = ['#087bb6', '#1466ad', '#0a91b9', '#456fbd', '#137e9e'];
 const API_ORIGIN = import.meta.env.DEV ? 'http://127.0.0.1:3001' : '';
@@ -247,6 +247,7 @@ async function startGame() {
   game = {
     canvas, ctx: canvas.getContext('2d'), engine, blocks: [], active: null,
     queue: [], pickTerm: createTermPicker(), pending: null, next: null, score: 0, paused: false, over: false,
+    dragPointerId: null,
     viewScale: 1, targetX: 0, width: 0, height: 0, spawnY: 185,
     base: null, baseWidth: 0, particles: [], resizeObserver: null, accumulator: 0,
     landing: false, landingTicks: 0, stableTicks: 0,
@@ -271,6 +272,9 @@ async function startGame() {
   });
   canvas.addEventListener('pointermove', onPointerMove);
   canvas.addEventListener('pointerdown', onPointerDown);
+  canvas.addEventListener('pointerup', onPointerUp);
+  canvas.addEventListener('pointercancel', onPointerCancel);
+  canvas.addEventListener('lostpointercapture', onPointerCancel);
   document.querySelector('#home-btn').addEventListener('click', () => { sfx('tap'); home(); });
   document.querySelector('#pause-btn').addEventListener('click', togglePause);
   window.addEventListener('keydown', onKeyDown);
@@ -291,7 +295,7 @@ function sizeStage() {
   canvas.width = Math.round(rect.width * dpr);
   canvas.height = Math.round(rect.height * dpr);
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-  const baseWidth = Math.min(game.width < 600 ? 340 : 740, game.width * (game.width < 600 ? .86 : .78));
+  const baseWidth = Math.min(game.width, 1300) * .7;
   if (!game.base) {
     game.baseWidth = baseWidth;
     game.base = Bodies.rectangle(game.width / 2, game.height - 72, baseWidth, 28, { isStatic: true, label: 'base', friction: 1.1 });
@@ -314,16 +318,32 @@ function sizeStage() {
 }
 function onPointerMove(event) {
   if (!game || game.paused || game.over) return;
+  if (event.pointerType !== 'mouse' && game.dragPointerId !== event.pointerId) return;
   const rect = game.canvas.getBoundingClientRect();
   const scale = game.viewScale;
   const offsetX = game.width * (1 - scale) / 2;
   game.targetX = Math.max(20, Math.min(game.width - 20, (event.clientX - rect.left - offsetX) / scale));
 }
 function onPointerDown(event) {
-  if (!game || game.paused || game.over) return;
+  if (!game || game.active || game.paused || game.over) return;
   event.preventDefault();
+  if (event.pointerType !== 'mouse') {
+    if (game.dragPointerId !== null) return;
+    game.dragPointerId = event.pointerId;
+    game.canvas.setPointerCapture(event.pointerId);
+  }
   onPointerMove(event);
+  if (event.pointerType === 'mouse') drop();
+}
+function onPointerUp(event) {
+  if (!game || game.dragPointerId !== event.pointerId) return;
+  onPointerMove(event);
+  game.dragPointerId = null;
+  if (game.canvas.hasPointerCapture(event.pointerId)) game.canvas.releasePointerCapture(event.pointerId);
   drop();
+}
+function onPointerCancel(event) {
+  if (game?.dragPointerId === event.pointerId) game.dragPointerId = null;
 }
 function onKeyDown(event) {
   if (screen !== 'game' || !game) return;
@@ -360,9 +380,8 @@ function settlePiece() {
   if (body.speed < .65 && body.angularSpeed < .025) game.stableTicks++;
   else game.stableTicks = 0;
   if (game.landingTicks < 30 || (game.stableTicks < 16 && game.landingTicks < 170)) return;
-  // A resting piece sleeps to stop tiny contact vibrations. The next impact
-  // wakes it, so the whole pile can still tilt and fall.
-  if (game.stableTicks >= 16) Sleeping.set(body, true);
+  // Matter handles sleep after contact resolution; forcing it here makes
+  // following letters shove the lower pile sideways.
   game.landing = false;
   game.score++;
   document.querySelector('#score').textContent = game.score;
