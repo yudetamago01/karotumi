@@ -226,3 +226,36 @@ test('a throttled client catches up physics debt after a timer hitch', () => {
   view.step(282, 120);
   assert.ok(view.engine.timing.timestamp > 100, 'debt is repaid after the hitch');
 });
+
+test('client poses always follow the server instead of drifting in a second world', () => {
+  const room = newRoom({ width: 390, height: 700 });
+  room.term = 'カロート';
+  const owner = room.order[room.turnIndex];
+  drop(room, owner, room.geometry.width / 2);
+  const view = new MultiPhysicsView(room.geometry);
+  view.step(0);
+  view.sync(publicState(room, owner));
+  for (let frame = 0; frame < 20; frame++) {
+    advanceRoomPhysics(room, room.physicsTime + PHYSICS_STEP_MS * 2);
+    view.step((frame + 1) * 16);
+  }
+  // Force a local-only divergence, then apply a compact pose stream.
+  const body = view.pieces.get(room.pieces[0].id).body;
+  Matter.Body.setPosition(body, { x: body.position.x + 80, y: body.position.y - 40 });
+  const piece = room.pieces[0];
+  view.applyAuthoritative({
+    phase: 'playing',
+    activeId: room.active?.id || null,
+    activeLanded: Boolean(room.active?.landed),
+    pieces: [{
+      id: piece.id, term: piece.term, ownerId: piece.ownerId,
+      x: piece.body.position.x, y: piece.body.position.y, angle: piece.body.angle,
+      vx: piece.body.velocity.x, vy: piece.body.velocity.y, va: piece.body.angularVelocity,
+      sleeping: piece.body.isSleeping,
+      offsetX: piece.offsetX, offsetY: piece.offsetY,
+    }],
+  });
+  const visible = view.pose(piece.id);
+  assert.ok(Math.abs(visible.x - piece.body.position.x) < .001, 'x matches the server pose stream');
+  assert.ok(Math.abs(visible.y - piece.body.position.y) < .001, 'y matches the server pose stream');
+});

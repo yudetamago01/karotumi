@@ -5,8 +5,8 @@ import { makeCompoundTextBody } from './physicsBody.js';
 
 const { Engine, Bodies, Body, Composite, Events, Sleeping } = Matter;
 
-// The server decides turns and losses. This matching Matter world only draws
-// the motion locally, so a word does not jump between delayed network frames.
+// Server Matter is the only authority. This worker only fills the gap between
+// pose packets so the canvas stays smooth — it must not invent its own pile.
 export class MultiPhysicsView {
   constructor(geometry) {
     this.geometry = geometry;
@@ -24,6 +24,7 @@ export class MultiPhysicsView {
     this.lastTime = null;
     this.accumulator = 0;
     this.predictedId = null;
+    this.lastAuthoritativeAt = 0;
     Events.on(this.engine, 'collisionStart', event => {
       const active = this.pieces.get(this.activeId)?.body;
       if (!active || this.landed) return;
@@ -61,6 +62,26 @@ export class MultiPhysicsView {
     return this.pieces.get(piece.id);
   }
 
+  applyTransform(piece) {
+    const local = this.pieces.get(piece.id);
+    if (!local?.body) return;
+    const body = local.body;
+    local.offsetX = piece.offsetX ?? local.offsetX;
+    local.offsetY = piece.offsetY ?? local.offsetY;
+    local.term = piece.term;
+    local.ownerId = piece.ownerId;
+    // Matter keeps isSleeping across setPosition; wake before every write.
+    Sleeping.set(body, false);
+    Body.setPosition(body, { x: piece.x, y: piece.y });
+    Body.setAngle(body, piece.angle || 0);
+    Body.setVelocity(body, { x: piece.vx || 0, y: piece.vy || 0 });
+    Body.setAngularVelocity(body, piece.va || 0);
+    if (piece.sleeping) Sleeping.set(body, true);
+    local.x = body.position.x;
+    local.y = body.position.y;
+    local.angle = body.angle;
+  }
+
   predict(term, ownerId, x, y, angle, id = `predicted-${crypto.randomUUID()}`) {
     const shape = CANONICAL_SHAPES[`t:${term}`] || CANONICAL_SHAPES[`e:${term}`];
     if (!shape) return;
@@ -82,8 +103,9 @@ export class MultiPhysicsView {
     this.predictedId = null;
   }
 
-  sync(room) {
-    if (room.phase !== 'playing') {
+  // Full room snapshot and compact pose streams share this write path.
+  applyAuthoritative(room) {
+    if (room.phase !== undefined && room.phase !== 'playing') {
       for (const piece of this.pieces.values()) Composite.remove(this.engine.world, piece.body);
       this.pieces.clear();
       this.activeId = null;
@@ -104,7 +126,7 @@ export class MultiPhysicsView {
         this.predictedId = null;
       }
     }
-    if (this.predictedId) {
+    if (this.predictedId && room.currentPlayerId !== undefined) {
       const predicted = this.pieces.get(this.predictedId);
       if (!predicted || room.currentPlayerId !== predicted.ownerId || room.term !== predicted.term || !room.turnDeadline) {
         this.clearPrediction();
@@ -118,38 +140,21 @@ export class MultiPhysicsView {
     for (const piece of room.pieces) {
       const local = this.pieces.get(piece.id);
       if (!local) this.add(piece);
-      else {
-        local.offsetX = piece.offsetX;
-        local.offsetY = piece.offsetY;
-        // Full state messages are infrequent. Correct a large divergence, but
-        // never pull a falling word a few pixels backwards on every packet.
-        // A sleeping server piece is already settled: any drift is simulation
-        // lag (common on phones) and must be corrected, or the word floats.
-        const distance = Math.hypot(local.body.position.x - piece.x, local.body.position.y - piece.y);
-        const settled = Boolean(piece.sleeping);
-        const shouldSnap = distance > 100 || (settled && distance > 4) || (!piece.sleeping && local.body.isSleeping && distance > 4);
-        if (shouldSnap) {
-          // Matter keeps isSleeping through setPosition; a sleeping body
-          // parked mid-air never falls again unless it is woken first.
-          Sleeping.set(local.body, false);
-          Body.setPosition(local.body, { x: piece.x, y: piece.y });
-          Body.setAngle(local.body, piece.angle);
-          Body.setVelocity(local.body, { x: piece.vx || 0, y: piece.vy || 0 });
-          Body.setAngularVelocity(local.body, piece.va || 0);
-        }
-        if (piece.sleeping && !local.body.isSleeping && local.body.speed < .65 && local.body.angularSpeed < .025) {
-          Sleeping.set(local.body, true);
-        } else if (!piece.sleeping && local.body.isSleeping) {
-          Sleeping.set(local.body, false);
-        }
+      else this.applyTransform(piece);
+    }
+    if (room.activeId !== undefined) {
+      if (room.activeId !== this.activeId) {
+        this.activeId = room.activeId;
+        this.landed = Boolean(room.activeLanded);
+      } else if (room.activeLanded) {
+        this.landed = true;
       }
     }
-    if (room.activeId !== this.activeId) {
-      this.activeId = room.activeId;
-      this.landed = Boolean(room.activeLanded);
-    } else if (room.activeLanded) {
-      this.landed = true;
-    }
+    this.lastAuthoritativeAt = performance.now();
+  }
+
+  sync(room) {
+    this.applyAuthoritative(room);
   }
 
   step(now, maxCatchupMs = 40) {
@@ -157,13 +162,11 @@ export class MultiPhysicsView {
       this.lastTime = now;
       return;
     }
-    // Keep unsimulated hitch time as debt instead of dropping it. A mobile
-    // worker that is throttled for a few frames must catch up to the server
-    // world or every drop appears to "reset" the pile.
+    // Local Matter is only a short gap-filler between server pose packets.
     const gap = Math.max(0, now - this.lastTime);
     const simulateMs = Math.min(gap, maxCatchupMs);
     this.lastTime = now - (gap - simulateMs);
-    this.accumulator = Math.min(maxCatchupMs * 3, this.accumulator + simulateMs);
+    this.accumulator = Math.min(maxCatchupMs * 2, this.accumulator + simulateMs);
     while (this.accumulator >= PHYSICS_STEP_MS) {
       const active = this.pieces.get(this.activeId)?.body;
       if (active && !this.landed) applyDropGravity(active, this.engine.gravity);

@@ -37,8 +37,6 @@ export class MultiPhysicsClient {
         const accepted = room.pieces.find(piece => piece.id === room.activeId);
         const predicted = this.pieces.get(this.predictedId);
         if (accepted && predicted && accepted.term === predicted.term && accepted.ownerId === predicted.ownerId) {
-          const pose = this.poses.get(this.predictedId);
-          if (pose) this.poses.set(accepted.id, pose);
           this.pieces.delete(this.predictedId);
           this.poses.delete(this.predictedId);
           this.predictedId = null;
@@ -56,10 +54,9 @@ export class MultiPhysicsClient {
       }
       for (const piece of room.pieces) {
         this.pieces.set(piece.id, piece);
-        if (!this.poses.has(piece.id)) {
-          this.poses.set(piece.id, { x: piece.x, y: piece.y, angle: piece.angle,
-            vx: piece.vx || 0, vy: piece.vy || 0, va: piece.va || 0 });
-        }
+        // Authoritative poses win over any local extrapolation.
+        this.poses.set(piece.id, { x: piece.x, y: piece.y, angle: piece.angle,
+          vx: piece.vx || 0, vy: piece.vy || 0, va: piece.va || 0 });
       }
     }
     this.send({ type: 'sync', room: {
@@ -67,6 +64,19 @@ export class MultiPhysicsClient {
       currentPlayerId: room.currentPlayerId, term: room.term, turnDeadline: room.turnDeadline,
       pieces: room.pieces,
     } });
+  }
+
+  applyPoses(update) {
+    if (!update?.pieces) return;
+    this.lastUpdateAt = performance.now();
+    for (const piece of update.pieces) {
+      this.pieces.set(piece.id, piece);
+      this.poses.set(piece.id, {
+        x: piece.x, y: piece.y, angle: piece.angle,
+        vx: piece.vx || 0, vy: piece.vy || 0, va: piece.va || 0,
+      });
+    }
+    this.send({ type: 'poses', ...update });
   }
 
   predict(term, ownerId, x, y, angle) {

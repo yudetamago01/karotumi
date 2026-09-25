@@ -546,7 +546,21 @@ export async function openMultiplayer(app, onHome, sfx) {
       setRoom(next);
       renderRoomState();
     });
-    model.stream.addEventListener('chat', event => {
+        model.stream.addEventListener('poses', event => {
+      if (model.disposed || !model.room) return;
+      const update = JSON.parse(event.data);
+      model.visual?.applyPoses(update);
+      if (model.room.phase === 'playing') {
+        const byId = new Map(update.pieces.map(piece => [piece.id, piece]));
+        model.room.pieces = model.room.pieces.map(piece => byId.get(piece.id) || piece);
+        for (const piece of update.pieces) {
+          if (!model.room.pieces.some(item => item.id === piece.id)) model.room.pieces.push(piece);
+        }
+        model.room.activeId = update.activeId;
+        model.room.activeLanded = update.activeLanded;
+        if (Number.isFinite(update.spawnY)) model.room.spawnY = update.spawnY;
+      }
+    });model.stream.addEventListener('chat', event => {
       if (model.disposed || !model.room) return;
       const message = JSON.parse(event.data);
       if (model.room.messages.some(item => item.id === message.id)) return;

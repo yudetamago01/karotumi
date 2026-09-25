@@ -207,6 +207,32 @@ export function publish(room) {
   }
 }
 
+function posePayload(room) {
+  // Compact stream: clients follow these poses instead of running a second
+  // Matter world that drifts from the server on phone timers.
+  return {
+    activeId: room.active?.id || null,
+    activeLanded: Boolean(room.active?.landed),
+    spawnY: room.spawnY,
+    pieces: room.pieces.map(p => ({
+      id: p.id, term: p.term, ownerId: p.ownerId,
+      x: p.body.position.x, y: p.body.position.y, angle: p.body.angle,
+      vx: p.body.velocity.x, vy: p.body.velocity.y, va: p.body.angularVelocity,
+      sleeping: p.body.isSleeping,
+      offsetX: p.offsetX, offsetY: p.offsetY,
+    })),
+  };
+}
+
+export function publishPoses(room) {
+  room.lastPoseAt = Date.now();
+  const payload = `event: poses\ndata: ${JSON.stringify(posePayload(room))}\n\n`;
+  for (const response of room.listeners) {
+    try { response.write(payload); }
+    catch { room.listeners.delete(response); }
+  }
+}
+
 export function subscribe(room, response) {
   room.listeners.add(response);
   response.write(`event: state\ndata: ${JSON.stringify(publicState(room, null))}\n\n`);
@@ -443,6 +469,8 @@ setInterval(() => {
     try {
       if (room.phase === 'playing') {
         advanceRoomPhysics(room);
+        const moving = room.active || room.pieces.some(p => !p.body.isSleeping);
+        if (moving && Date.now() - (room.lastPoseAt || 0) >= 100) publishPoses(room);
       }
       if (room.dirty && Date.now() - (room.lastPersistAttempt || 0) > 5000) {
         persist(room).catch(error => console.error('Room persistence:', error.message));

@@ -20,6 +20,14 @@ self.onmessage = ({ data }) => {
     view = new MultiPhysicsView(data.geometry);
   } else if (data.type === 'sync') {
     view?.sync(data.room);
+  } else if (data.type === 'poses') {
+    view?.applyAuthoritative({
+      phase: 'playing',
+      activeId: data.activeId,
+      activeLanded: data.activeLanded,
+      spawnY: data.spawnY,
+      pieces: data.pieces,
+    });
   } else if (data.type === 'predict') {
     view?.predict(data.term, data.ownerId, data.x, data.y, data.angle, data.id);
   } else if (data.type === 'clear') {
