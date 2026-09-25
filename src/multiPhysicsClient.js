@@ -54,9 +54,13 @@ export class MultiPhysicsClient {
       }
       for (const piece of room.pieces) {
         this.pieces.set(piece.id, piece);
-        // Authoritative poses win over any local extrapolation.
-        this.poses.set(piece.id, { x: piece.x, y: piece.y, angle: piece.angle,
-          vx: piece.vx || 0, vy: piece.vy || 0, va: piece.va || 0 });
+        // Keep the last worker pose when we already have one. Overwriting with
+        // raw server coordinates every packet makes the canvas jump (jitter);
+        // the worker soft-follows the server and publishes smooth poses.
+        if (!this.poses.has(piece.id)) {
+          this.poses.set(piece.id, { x: piece.x, y: piece.y, angle: piece.angle,
+            vx: piece.vx || 0, vy: piece.vy || 0, va: piece.va || 0 });
+        }
       }
     }
     this.send({ type: 'sync', room: {
@@ -71,10 +75,12 @@ export class MultiPhysicsClient {
     this.lastUpdateAt = performance.now();
     for (const piece of update.pieces) {
       this.pieces.set(piece.id, piece);
-      this.poses.set(piece.id, {
-        x: piece.x, y: piece.y, angle: piece.angle,
-        vx: piece.vx || 0, vy: piece.vy || 0, va: piece.va || 0,
-      });
+      if (!this.poses.has(piece.id)) {
+        this.poses.set(piece.id, {
+          x: piece.x, y: piece.y, angle: piece.angle,
+          vx: piece.vx || 0, vy: piece.vy || 0, va: piece.va || 0,
+        });
+      }
     }
     this.send({ type: 'poses', ...update });
   }

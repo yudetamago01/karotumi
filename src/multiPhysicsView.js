@@ -70,13 +70,47 @@ export class MultiPhysicsView {
     local.offsetY = piece.offsetY ?? local.offsetY;
     local.term = piece.term;
     local.ownerId = piece.ownerId;
-    // Matter keeps isSleeping across setPosition; wake before every write.
-    Sleeping.set(body, false);
-    Body.setPosition(body, { x: piece.x, y: piece.y });
-    Body.setAngle(body, piece.angle || 0);
-    Body.setVelocity(body, { x: piece.vx || 0, y: piece.vy || 0 });
-    Body.setAngularVelocity(body, piece.va || 0);
-    if (piece.sleeping) Sleeping.set(body, true);
+
+    const dx = piece.x - body.position.x;
+    const dy = piece.y - body.position.y;
+    const err = Math.hypot(dx, dy);
+    const angleErr = Math.abs((piece.angle || 0) - body.angle);
+
+    // Resting words must stay asleep. Waking them on every pose packet
+    // destroys friction the same way solo play settles a pile.
+    if (piece.sleeping) {
+      if (body.isSleeping && err < 1.5 && angleErr < .015) return;
+      Sleeping.set(body, false);
+      Body.setPosition(body, { x: piece.x, y: piece.y });
+      Body.setAngle(body, piece.angle || 0);
+      Body.setVelocity(body, { x: 0, y: 0 });
+      Body.setAngularVelocity(body, 0);
+      Sleeping.set(body, true);
+      local.x = body.position.x;
+      local.y = body.position.y;
+      local.angle = body.angle;
+      return;
+    }
+
+    if (body.isSleeping) Sleeping.set(body, false);
+
+    // Hard teleport only for a real miss. Small drift is pulled gently so
+    // contacts and friction keep behaving like the solo engine.
+    if (err > 120 || angleErr > .55) {
+      Body.setPosition(body, { x: piece.x, y: piece.y });
+      Body.setAngle(body, piece.angle || 0);
+      Body.setVelocity(body, { x: piece.vx || 0, y: piece.vy || 0 });
+      Body.setAngularVelocity(body, piece.va || 0);
+    } else {
+      const pull = err > 12 ? .28 : .12;
+      Body.translate(body, { x: dx * pull, y: dy * pull });
+      if (angleErr > .008) Body.setAngle(body, body.angle + ((piece.angle || 0) - body.angle) * pull);
+      Body.setVelocity(body, {
+        x: body.velocity.x * (1 - pull) + (piece.vx || 0) * pull,
+        y: body.velocity.y * (1 - pull) + (piece.vy || 0) * pull,
+      });
+      Body.setAngularVelocity(body, body.angularVelocity * (1 - pull) + (piece.va || 0) * pull);
+    }
     local.x = body.position.x;
     local.y = body.position.y;
     local.angle = body.angle;

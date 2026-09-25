@@ -239,9 +239,9 @@ test('client poses always follow the server instead of drifting in a second worl
     advanceRoomPhysics(room, room.physicsTime + PHYSICS_STEP_MS * 2);
     view.step((frame + 1) * 16);
   }
-  // Force a local-only divergence, then apply a compact pose stream.
+  // Force a large local-only divergence, then apply a compact pose stream.
   const body = view.pieces.get(room.pieces[0].id).body;
-  Matter.Body.setPosition(body, { x: body.position.x + 80, y: body.position.y - 40 });
+  Matter.Body.setPosition(body, { x: body.position.x + 160, y: body.position.y - 120 });
   const piece = room.pieces[0];
   view.applyAuthoritative({
     phase: 'playing',
@@ -258,4 +258,30 @@ test('client poses always follow the server instead of drifting in a second worl
   const visible = view.pose(piece.id);
   assert.ok(Math.abs(visible.x - piece.body.position.x) < .001, 'x matches the server pose stream');
   assert.ok(Math.abs(visible.y - piece.body.position.y) < .001, 'y matches the server pose stream');
+});
+
+test('small pose drift is pulled gently so friction still settles like solo', () => {
+  const room = newRoom({ width: 390, height: 700 });
+  room.term = 'カロート';
+  drop(room, room.order[room.turnIndex], room.geometry.width / 2);
+  const view = new MultiPhysicsView(room.geometry);
+  view.step(0);
+  view.sync(publicState(room, room.order[0]));
+  const piece = room.pieces[0];
+  const body = view.pieces.get(piece.id).body;
+  const startX = body.position.x;
+  Matter.Body.setPosition(body, { x: startX + 20, y: body.position.y });
+  view.applyAuthoritative({
+    phase: 'playing',
+    activeId: piece.id,
+    activeLanded: false,
+    pieces: [{
+      id: piece.id, term: piece.term, ownerId: piece.ownerId,
+      x: startX, y: body.position.y, angle: 0,
+      vx: 0, vy: 0, va: 0, sleeping: false,
+      offsetX: piece.offsetX, offsetY: piece.offsetY,
+    }],
+  });
+  const after = view.pose(piece.id);
+  assert.ok(after.x > startX && after.x < startX + 20, 'small error is eased, not teleported');
 });
