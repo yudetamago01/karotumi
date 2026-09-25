@@ -59,3 +59,59 @@ test('confirmed pieces blend between server poses instead of jumping', () => {
     globalThis.Worker = originalWorker;
   }
 });
+
+test('a confirmed drop continues falling instead of snapping back to spawn', () => {
+  const originalWorker = globalThis.Worker;
+  let worker;
+  globalThis.Worker = class {
+    constructor() { this.messages = []; worker = this; }
+    postMessage(message) { this.messages.push(message); }
+    terminate() {}
+  };
+  try {
+    const geometry = stageGeometry(390, 700);
+    const client = new MultiPhysicsClient(geometry);
+    client.sync({ phase: 'playing', pieces: [], activeId: null, currentPlayerId: 'a', term: 'RK', turnDeadline: 1 });
+    const predicted = client.predict('RK', 'a', geometry.width / 2, geometry.spawnTop, 0);
+    // Worker has already started the fall when the server confirms at spawn.
+    worker.onmessage({
+      data: {
+        epoch: worker.messages.at(-1).epoch,
+        poses: [[predicted.id, predicted.x, predicted.y + 40, 0, 0, 2, 0]],
+      },
+    });
+    const falling = client.pose(predicted.id);
+    assert.ok(falling.y > predicted.y, 'prediction has begun to fall');
+    const serverId = 'server-drop';
+    client.sync({
+      phase: 'playing',
+      currentPlayerId: 'a',
+      term: 'RK',
+      turnDeadline: 1,
+      activeId: serverId,
+      activeLanded: false,
+      pieces: [{
+        id: serverId, term: 'RK', ownerId: 'a',
+        x: predicted.x, y: predicted.y, angle: 0,
+        vx: 0, vy: 0, va: 0, sleeping: false,
+        offsetX: predicted.offsetX, offsetY: predicted.offsetY,
+      }],
+    });
+    const after = client.pose(serverId);
+    assert.ok(after, 'the confirmed piece is drawn');
+    assert.ok(after.y >= falling.y - 1, 'the word is not pulled back up to the spawn cell');
+    // A later spawn-cell sample must not rewind the fall either.
+    client.applyPoses({
+      pieces: [{
+        id: serverId, term: 'RK', ownerId: 'a',
+        x: predicted.x, y: predicted.y, angle: 0,
+        vx: 0, vy: 0, va: 0, sleeping: false,
+        offsetX: predicted.offsetX, offsetY: predicted.offsetY,
+      }],
+    });
+    assert.ok(client.pose(serverId).y >= falling.y - 1);
+    client.dispose();
+  } finally {
+    globalThis.Worker = originalWorker;
+  }
+});

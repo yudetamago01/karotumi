@@ -53,6 +53,11 @@ export class MultiPhysicsClient {
       trail.curr = next;
       return;
     }
+    // A drop is published at the spawn cell before the first physics step.
+    // Taking that sample after local prediction already fell makes the word
+    // jump upward and then fall again.
+    const rise = trail.curr.y - next.y;
+    if (!next.sleeping && !trail.curr.sleeping && rise > 8 && next.vy > -.5) return;
     const interval = Math.max(40, Math.min(200, now - trail.curr.at));
     trail.prev = trail.curr;
     trail.curr = next;
@@ -71,15 +76,12 @@ export class MultiPhysicsClient {
         const accepted = room.pieces.find(piece => piece.id === room.activeId);
         const predicted = this.pieces.get(this.predictedId);
         if (accepted && predicted && accepted.term === predicted.term && accepted.ownerId === predicted.ownerId) {
-          // Continue from the predicted pixels so the handoff does not jump.
+          // Continue from the predicted pixels. The server's first snapshot is
+          // the spawn cell and would yank a falling word back up.
           const from = this.predictedPose || this.trails.get(this.predictedId)?.curr;
-          if (from) {
-            this.trails.set(accepted.id, {
-              prev: clonePose(from),
-              curr: { ...clonePose(accepted), at: performance.now() },
-              interval: LERP_MS,
-            });
-          }
+          const keep = from ? clonePose(from) : clonePose(accepted);
+          keep.at = performance.now();
+          this.trails.set(accepted.id, { prev: keep, curr: keep, interval: LERP_MS });
           this.pieces.delete(this.predictedId);
           this.trails.delete(this.predictedId);
           this.predictedId = null;
