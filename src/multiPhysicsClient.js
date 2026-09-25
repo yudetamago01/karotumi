@@ -12,9 +12,9 @@ function clonePose(pose) {
   };
 }
 
-// Server poses are the only thing drawn for confirmed pieces. Matter in the
-// worker exists so a local drop still collides with the pile immediately —
-// its body positions are never painted, which is what caused the jitter.
+// Server poses are what we paint for confirmed pieces. The worker's Matter
+// world only supplies the local drop's motion so the piece collides with the
+// pile — every piece (including the prediction) goes through the same trail.
 export class MultiPhysicsClient {
   constructor(geometry) {
     this.geometry = geometry;
@@ -23,13 +23,22 @@ export class MultiPhysicsClient {
     this.trails = new Map();
     this.predictedId = null;
     this.epoch = 0;
-    this.predictedPose = null;
     this.worker.onmessage = ({ data }) => {
-      if (data.epoch !== this.epoch) return;
+      // Always take the newest simulation poses for the local drop. Filtering
+      // by command epoch threw away in-flight frames and froze the dropper.
+      if (!Array.isArray(data.poses)) return;
       for (const [id, x, y, angle, vx, vy, va] of data.poses) {
-        if (id === this.predictedId) {
-          this.predictedPose = { x, y, angle, vx, vy, va, at: performance.now() };
-        }
+        if (id !== this.predictedId) continue;
+        const piece = this.pieces.get(id);
+        this.ingest({
+          id,
+          x, y, angle, vx, vy, va,
+          sleeping: false,
+          term: piece?.term,
+          ownerId: piece?.ownerId,
+          offsetX: piece?.offsetX,
+          offsetY: piece?.offsetY,
+        });
       }
     };
     this.send({ type: 'init', geometry });
@@ -54,12 +63,16 @@ export class MultiPhysicsClient {
       return;
     }
     // A drop is published at the spawn cell before the first physics step.
-    // Clamp that rewind so the word keeps falling instead of pausing.
+    // Clamp that rewind (keep current motion) so the word neither jumps up
+    // nor stalls at zero velocity.
     const rise = trail.curr.y - next.y;
     if (!next.sleeping && !trail.curr.sleeping && rise > 8 && next.vy > -.5) {
       next.y = trail.curr.y;
       next.x = trail.curr.x;
       next.angle = trail.curr.angle;
+      next.vx = trail.curr.vx;
+      next.vy = trail.curr.vy;
+      next.va = trail.curr.va;
     }
     const interval = Math.max(40, Math.min(200, now - trail.curr.at));
     trail.prev = trail.curr;
@@ -72,30 +85,24 @@ export class MultiPhysicsClient {
       this.pieces.clear();
       this.trails.clear();
       this.predictedId = null;
-      this.predictedPose = null;
     } else {
       const incoming = new Set(room.pieces.map(piece => piece.id));
       if (this.predictedId && room.activeId) {
         const accepted = room.pieces.find(piece => piece.id === room.activeId);
         const predicted = this.pieces.get(this.predictedId);
         if (accepted && predicted && accepted.term === predicted.term && accepted.ownerId === predicted.ownerId) {
-          // Continue from the predicted pixels. The server's first snapshot is
-          // the spawn cell and would yank a falling word back up.
-          const from = this.predictedPose || this.trails.get(this.predictedId)?.curr;
-          const keep = from ? clonePose(from) : clonePose(accepted);
-          keep.at = performance.now();
-          this.trails.set(accepted.id, { prev: keep, curr: keep, interval: LERP_MS });
+          // Keep the prediction trail under the new id — do not rewind to spawn.
+          const trail = this.trails.get(this.predictedId);
+          if (trail) this.trails.set(accepted.id, trail);
           this.pieces.delete(this.predictedId);
           this.trails.delete(this.predictedId);
           this.predictedId = null;
-          this.predictedPose = null;
         }
       }
       if (this.predictedId && (room.currentPlayerId !== this.pieces.get(this.predictedId)?.ownerId || !room.turnDeadline)) {
         this.pieces.delete(this.predictedId);
         this.trails.delete(this.predictedId);
         this.predictedId = null;
-        this.predictedPose = null;
       }
       for (const id of this.pieces.keys()) {
         if (id === this.predictedId || incoming.has(id)) continue;
@@ -104,6 +111,7 @@ export class MultiPhysicsClient {
       }
       for (const piece of room.pieces) {
         this.pieces.set(piece.id, piece);
+        if (piece.id === this.predictedId) continue;
         this.ingest(piece);
       }
     }
@@ -118,6 +126,7 @@ export class MultiPhysicsClient {
     if (!update?.pieces) return;
     for (const piece of update.pieces) {
       this.pieces.set(piece.id, piece);
+      if (piece.id === this.predictedId) continue;
       this.ingest(piece);
     }
     this.send({ type: 'poses', ...update });
@@ -135,12 +144,8 @@ export class MultiPhysicsClient {
     const piece = { id, term, ownerId, x: center - offsetX, y: y - offsetY, angle, offsetX, offsetY };
     this.predictedId = id;
     this.pieces.set(id, piece);
-    this.predictedPose = { x: piece.x, y: piece.y, angle, vx: 0, vy: 0, va: 0, at: performance.now() };
-    this.trails.set(id, {
-      prev: clonePose(this.predictedPose),
-      curr: clonePose(this.predictedPose),
-      interval: LERP_MS,
-    });
+    const start = clonePose({ x: piece.x, y: piece.y, angle, vx: 0, vy: 0, va: 0 });
+    this.trails.set(id, { prev: start, curr: start, interval: LERP_MS });
     this.send({ type: 'predict', id, term, ownerId, x: center, y, angle });
     return piece;
   }
@@ -150,16 +155,10 @@ export class MultiPhysicsClient {
     this.pieces.delete(this.predictedId);
     this.trails.delete(this.predictedId);
     this.predictedId = null;
-    this.predictedPose = null;
     this.send({ type: 'clear' });
   }
 
   pose(id) {
-    if (id === this.predictedId && this.predictedPose) {
-      const pose = this.predictedPose;
-      const age = Math.min(24, Math.max(0, performance.now() - pose.at)) / BASE_FRAME_MS;
-      return { x: pose.x + pose.vx * age, y: pose.y + pose.vy * age, angle: pose.angle + pose.va * age };
-    }
     const trail = this.trails.get(id);
     if (!trail) return null;
     const { prev, curr, interval } = trail;
