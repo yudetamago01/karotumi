@@ -108,3 +108,27 @@ test('an improvement is visible right away even if a list read was in flight', a
     else process.env.NODE_ENV = previousEnv;
   }
 });
+
+test('recovery raises a missing best but never lowers an existing one', async () => {
+  const previousLogin = process.env.DEV_LOGIN;
+  const previousEnv = process.env.NODE_ENV;
+  process.env.DEV_LOGIN = '1';
+  process.env.NODE_ENV = 'development';
+  try {
+    const { recoverBest, bestCount } = await import('../server/ranking.js');
+    const user = { id: 'rank-recover', name: 'Recover', avatar: null };
+    const raised = await recoverBest(user, 21);
+    assert.equal(raised.recovered, true);
+    assert.equal(raised.bestCount, 21);
+    assert.equal(await bestCount(user.id), 21);
+    const kept = await recoverBest(user, 8);
+    assert.equal(kept.recovered, false);
+    assert.equal(kept.bestCount, 21, 'lower recovery claims cannot shrink the board');
+    await assert.rejects(recoverBest(user, 0), /1〜10000/);
+  } finally {
+    if (previousLogin === undefined) delete process.env.DEV_LOGIN;
+    else process.env.DEV_LOGIN = previousLogin;
+    if (previousEnv === undefined) delete process.env.NODE_ENV;
+    else process.env.NODE_ENV = previousEnv;
+  }
+});

@@ -8,7 +8,7 @@ import {
   databaseReady, createRoom, getRoom, joinRoom, publicState, subscribe,
   startRoom, acceptShape, setAim, drop, chooseAfterLoss, leaveRoom, addMessage, persist,
 } from './rooms.js';
-import { leaderboard, bestCount } from './ranking.js';
+import { leaderboard, bestCount, recoverBest } from './ranking.js';
 import { startSoloRun, finishSoloRun } from './soloRuns.js';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -218,6 +218,17 @@ const server = http.createServer(async (req, res) => {
       if (!user) { json(res, 401, { error: 'Karotterにログインしてください' }); return; }
       const input = await bodyJson(req);
       json(res, 200, await finishSoloRun(user, input)); return;
+    }
+    if (pathname === '/api/solo/recover-best' && req.method === 'POST') {
+      const user = userFor(req);
+      if (!user) { json(res, 401, { error: 'Karotterにログインしてください' }); return; }
+      const now = Date.now();
+      const last = chatTimes.get(`recover:${user.id}`) || 0;
+      if (now - last < 8000) { json(res, 429, { error: '少し待ってからもう一度試してください' }); return; }
+      chatTimes.set(`recover:${user.id}`, now);
+      const input = await bodyJson(req);
+      const count = Number(input.count);
+      json(res, 200, await recoverBest(user, Math.trunc(count))); return;
     }
 
     if (pathname.startsWith('/api/rooms')) {

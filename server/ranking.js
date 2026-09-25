@@ -97,3 +97,17 @@ export async function submitScore(user, count) {
   if (rows[0].improved) invalidateCache();
   return { bestCount: rows[0].best_count, updated: rows[0].improved };
 }
+
+// One-time repair for bests that were shown locally before submit/display bugs
+// were fixed. Never lowers an existing verified score.
+export async function recoverBest(user, count) {
+  if (!Number.isSafeInteger(count) || count < 1 || count > 10000) {
+    throw new Error('記録は1〜10000個で送信してください');
+  }
+  const previous = await bestCount(user.id);
+  if (count <= previous) {
+    return { bestCount: previous, updated: false, recovered: false };
+  }
+  const result = await submitScore(user, count);
+  return { ...result, recovered: true };
+}

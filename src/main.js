@@ -95,6 +95,21 @@ function syncPendingScore() {
   }).finally(() => { scoreSync = null; });
   return scoreSync;
 }
+// Bests earned before submit/display fixes only exist on the device. Raise the
+// linked account's stored best to that number — never lower an existing score.
+async function reconcileLocalBest() {
+  const localBest = Number(localStorage.getItem('karotter-stack-best') || 0);
+  if (!Number.isSafeInteger(localBest) || localBest < 1) return null;
+  try {
+    const me = await rankingApi('/api/me');
+    if (!me.user) return null;
+    const verified = Number(me.bestCount) || 0;
+    if (localBest <= verified) return null;
+    return await rankingApi('/api/solo/recover-best', { count: localBest });
+  } catch {
+    return null;
+  }
+}
 
 function tone(freq, duration, type = 'sine', gain = .08, delay = 0) {
   if (type === 'triangle' ? !settings.music : !settings.sound) return;
@@ -235,7 +250,10 @@ async function showRanking() {
     renderLogin(me.user, config);
     // Submit any finished run BEFORE reading the list. Fetching in parallel
     // showed a board from before the personal best was stored.
-    if (me.user) await syncPendingScore();
+    if (me.user) {
+      await syncPendingScore();
+      await reconcileLocalBest();
+    }
     if (screen !== 'ranking') return;
     const [scoreData, meAfter] = await Promise.all([
       rankingApi('/api/ranking'),
