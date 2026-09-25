@@ -1,6 +1,6 @@
 import Matter from 'matter-js';
 import { createTermPicker } from './termPicker.js';
-import { splitTerm, makeTextSprite, makeTextBody } from './textBodies.js';
+import { splitTerm, makeTextSprite, makeTextBody, loadGameFonts } from './textBodies.js';
 import { loadGameEmojiImages, termLabelHtml } from './emojiAssets.js';
 import { openMultiplayer } from './multi.js';
 import { bindHoldRotation, rotationIcon } from './rotationControls.js';
@@ -307,7 +307,7 @@ async function startGame() {
   screen = 'loading';
   const requestedSize = { width: window.innerWidth, height: window.innerHeight };
   const [, , rankedSession] = await Promise.all([
-    document.fonts.ready,
+    loadGameFonts(),
     loadGameEmojiImages(),
     rankingApi('/api/solo/start', requestedSize, { signal: AbortSignal.timeout(7000) }).catch(() => null),
   ]);

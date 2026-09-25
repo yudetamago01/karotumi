@@ -123,12 +123,24 @@ export class MultiPhysicsView {
         local.offsetY = piece.offsetY;
         // Full state messages are infrequent. Correct a large divergence, but
         // never pull a falling word a few pixels backwards on every packet.
+        // A sleeping server piece is already settled: any drift is simulation
+        // lag (common on phones) and must be corrected, or the word floats.
         const distance = Math.hypot(local.body.position.x - piece.x, local.body.position.y - piece.y);
-        if (distance > 100) {
+        const settled = Boolean(piece.sleeping);
+        const shouldSnap = distance > 100 || (settled && distance > 4) || (!piece.sleeping && local.body.isSleeping && distance > 4);
+        if (shouldSnap) {
+          // Matter keeps isSleeping through setPosition; a sleeping body
+          // parked mid-air never falls again unless it is woken first.
+          Sleeping.set(local.body, false);
           Body.setPosition(local.body, { x: piece.x, y: piece.y });
           Body.setAngle(local.body, piece.angle);
           Body.setVelocity(local.body, { x: piece.vx || 0, y: piece.vy || 0 });
           Body.setAngularVelocity(local.body, piece.va || 0);
+        }
+        if (piece.sleeping && !local.body.isSleeping && local.body.speed < .65 && local.body.angularSpeed < .025) {
+          Sleeping.set(local.body, true);
+        } else if (!piece.sleeping && local.body.isSleeping) {
+          Sleeping.set(local.body, false);
         }
       }
     }
@@ -141,9 +153,17 @@ export class MultiPhysicsView {
   }
 
   step(now, maxCatchupMs = 40) {
-    const delta = this.lastTime === null ? 0 : Math.min(maxCatchupMs, Math.max(0, now - this.lastTime));
-    this.lastTime = now;
-    this.accumulator = Math.min(maxCatchupMs + PHYSICS_STEP_MS, this.accumulator + delta);
+    if (this.lastTime === null) {
+      this.lastTime = now;
+      return;
+    }
+    // Keep unsimulated hitch time as debt instead of dropping it. A mobile
+    // worker that is throttled for a few frames must catch up to the server
+    // world or every drop appears to "reset" the pile.
+    const gap = Math.max(0, now - this.lastTime);
+    const simulateMs = Math.min(gap, maxCatchupMs);
+    this.lastTime = now - (gap - simulateMs);
+    this.accumulator = Math.min(maxCatchupMs * 3, this.accumulator + simulateMs);
     while (this.accumulator >= PHYSICS_STEP_MS) {
       const active = this.pieces.get(this.activeId)?.body;
       if (active && !this.landed) applyDropGravity(active, this.engine.gravity);

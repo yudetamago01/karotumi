@@ -22,8 +22,27 @@ export function splitTerm(term) {
   return pieces;
 }
 
+const BASE_FONT = 64;
+const FONT_FAMILY = '"M PLUS Rounded 1c", sans-serif';
+const FONT_PROBE = 'カロッター用語0123ABCabc';
+
 function fontFor(size) {
-  return `900 ${size}px "M PLUS Rounded 1c", sans-serif`;
+  return `900 ${size}px ${FONT_FAMILY}`;
+}
+
+// Google Fonts splits Japanese into subsets. Without an explicit load, the
+// first sprites can be drawn in the fallback face and cached — phone and PC
+// then show different stroke weights for the same term.
+let fontLoad;
+export function loadGameFonts() {
+  fontLoad ||= (async () => {
+    if (!document.fonts?.load) return;
+    try {
+      await document.fonts.load(fontFor(BASE_FONT), FONT_PROBE);
+      await document.fonts.ready;
+    } catch { /* Drawing falls back to the system face. */ }
+  })();
+  return fontLoad;
 }
 
 function occupiedRectangles(image, cell) {
@@ -77,8 +96,7 @@ function occupiedRectangles(image, cell) {
 
 export function makeTextSprite(piece, stageWidth, color = '#086b9e') {
   const canonical = CANONICAL_SHAPES[`${piece.emoji ? 'e' : 't'}:${piece.text}`];
-  const maxWidth = Math.max(130, Math.min(stageWidth * .76, 510));
-  const key = `${piece.text}|${piece.emoji}|${Math.round(maxWidth)}|${color}`;
+  const key = `${piece.text}|${piece.emoji}|${color}`;
   if (spriteCache.has(key)) return spriteCache.get(key);
 
   if (piece.emoji) {
@@ -93,26 +111,31 @@ export function makeTextSprite(piece, stageWidth, color = '#086b9e') {
     return sprite;
   }
 
+  // The canvas is always the shared collider box. Drawing at 1:1 keeps stroke
+  // weight identical on every device; a metric-sized canvas stretched onto the
+  // box changes thickness when font advances differ (phone vs PC).
+  const maxWidth = Math.max(130, Math.min(stageWidth * .76, 510));
+  const width = canonical?.width ?? Math.ceil(maxWidth);
+  const height = canonical?.height ?? Math.ceil(BASE_FONT * 1.55 + 18);
   const canvas = document.createElement('canvas');
-  const ctx = canvas.getContext('2d', { willReadFrequently: true });
-  let size = Math.max(34, Math.floor(Math.min(62, stageWidth * .13)));
-  ctx.font = fontFor(size);
-  while (ctx.measureText(piece.text).width > maxWidth - 18 && size > 16) {
-    size -= 2;
-    ctx.font = fontFor(size);
-  }
-  const naturalWidth = ctx.measureText(piece.text).width;
-  const horizontalScale = Math.min(1, (maxWidth - 18) / naturalWidth);
-  const width = Math.ceil(naturalWidth * horizontalScale + 18);
-  const height = Math.ceil(size * 1.55 + 18);
   canvas.width = width;
   canvas.height = height;
-  ctx.font = fontFor(size);
+  const ctx = canvas.getContext('2d', { willReadFrequently: true });
+  ctx.font = fontFor(BASE_FONT);
+  const metrics = ctx.measureText(piece.text);
+  const textWidth = Math.max(1, metrics.width);
+  const textHeight = Math.max(1,
+    (metrics.actualBoundingBoxAscent || BASE_FONT * .82) +
+    (metrics.actualBoundingBoxDescent || BASE_FONT * .28));
+  const pad = 10;
+  const fit = Math.min((width - pad * 2) / textWidth, (height - pad * 2) / textHeight);
+  ctx.translate(width / 2, height / 2);
+  ctx.scale(fit, fit);
+  ctx.font = fontFor(BASE_FONT);
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
-  ctx.translate(width / 2, height / 2);
-  ctx.scale(horizontalScale, 1);
-  ctx.lineWidth = Math.max(2, size * .045);
+  // Constant in user space → visible stroke scales with the glyphs (uniform).
+  ctx.lineWidth = BASE_FONT * .045;
   ctx.lineJoin = 'round';
   ctx.strokeStyle = '#fff';
   ctx.strokeText(piece.text, 0, 0);
@@ -129,7 +152,7 @@ export function makeTextSprite(piece, stageWidth, color = '#086b9e') {
       rectangles = occupiedRectangles(pixels, cell);
     }
   }
-  const sprite = { canvas, width: canonical?.width ?? width, height: canonical?.height ?? height, rectangles, piece, size, cell };
+  const sprite = { canvas, width, height, rectangles, piece, size: BASE_FONT * fit, cell };
   spriteCache.set(key, sprite);
   return sprite;
 }

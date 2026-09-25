@@ -30,6 +30,7 @@ self.onmessage = ({ data }) => {
 
 setInterval(() => {
   if (!view || !view.pieces.size) return;
-  view.step(performance.now(), 100);
+  // Mobile browsers throttle worker timers; allow a wider catch-up window.
+  view.step(performance.now(), 120);
   publish();
 }, 1000 / 60);

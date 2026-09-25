@@ -1,4 +1,4 @@
-import { makeTextSprite } from './textBodies.js';
+import { loadGameFonts, makeTextSprite } from './textBodies.js';
 import { hasGameEmoji, loadGameEmojiImages, termLabelHtml } from './emojiAssets.js';
 import { TERM_DEFINITIONS } from './termDefinitions.js';
 import { bindHoldRotation, rotationIcon } from './rotationControls.js';
@@ -36,7 +36,7 @@ async function api(path, body) {
 }
 
 export async function openMultiplayer(app, onHome, sfx) {
-  await Promise.all([document.fonts.ready, loadGameEmojiImages()]);
+  await Promise.all([loadGameFonts(), loadGameEmojiImages()]);
   const model = {
     config: null, user: null, room: null, stream: null, frame: 0,
     disposed: false, x: 500, rotation: 0, dragPointerId: null, drawn: [], visual: null,

@@ -184,3 +184,45 @@ test('local multiplayer motion matches the server and predicts an immediate drop
     }
   }
 });
+
+test('a settled server piece is snapped awake instead of floating mid-air', () => {
+  const room = newRoom({ width: 390, height: 700 });
+  room.term = 'カロート';
+  const owner = room.order[room.turnIndex];
+  const x = room.geometry.width / 2;
+  const view = new MultiPhysicsView(room.geometry);
+  view.step(0);
+  drop(room, owner, x);
+  // Simulate a lagging phone view: local body left sleeping above the plate.
+  const state = publicState(room, owner);
+  const settled = { ...state.pieces[0], sleeping: true, y: state.pieces[0].y - 180, vx: 0, vy: 0, va: 0 };
+  view.add({ ...settled, id: 'lagging' });
+  const lagging = view.pieces.get('lagging').body;
+  Matter.Sleeping.set(lagging, true);
+  view.sync({ ...state, activeId: null, activeLanded: false, pieces: [settled] });
+  const body = view.pieces.get(settled.id).body;
+  assert.ok(!body.isSleeping || Math.hypot(body.position.x - settled.x, body.position.y - settled.y) < 1,
+    'the lagging body follows the settled server pose');
+  assert.ok(Math.hypot(body.position.x - settled.x, body.position.y - settled.y) < 1, 'snap lands on the server position');
+  // Wake-on-snap: parking a body mid-air while sleeping leaves it frozen forever.
+  view.sync({ ...state, activeId: null, activeLanded: false, pieces: [{ ...settled, id: 'air', y: settled.y - 220, sleeping: false }] });
+  const air = view.pieces.get('air');
+  assert.ok(air, 'the airborne replacement is tracked');
+  assert.equal(air.body.isSleeping, false, 'a non-sleeping server pose keeps the body awake');
+});
+
+test('a throttled client catches up physics debt after a timer hitch', () => {
+  const room = newRoom({ width: 390, height: 700 });
+  room.term = 'カロート';
+  const owner = room.order[room.turnIndex];
+  const x = room.geometry.width / 2;
+  const view = new MultiPhysicsView(room.geometry);
+  view.step(0);
+  drop(room, owner, x);
+  view.sync(publicState(room, owner));
+  // One long hitch (mobile worker throttle) must not permanently drop sim time.
+  view.step(250, 120);
+  view.step(266, 120);
+  view.step(282, 120);
+  assert.ok(view.engine.timing.timestamp > 100, 'debt is repaid after the hitch');
+});
