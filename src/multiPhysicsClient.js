@@ -54,10 +54,13 @@ export class MultiPhysicsClient {
       return;
     }
     // A drop is published at the spawn cell before the first physics step.
-    // Taking that sample after local prediction already fell makes the word
-    // jump upward and then fall again.
+    // Clamp that rewind so the word keeps falling instead of pausing.
     const rise = trail.curr.y - next.y;
-    if (!next.sleeping && !trail.curr.sleeping && rise > 8 && next.vy > -.5) return;
+    if (!next.sleeping && !trail.curr.sleeping && rise > 8 && next.vy > -.5) {
+      next.y = trail.curr.y;
+      next.x = trail.curr.x;
+      next.angle = trail.curr.angle;
+    }
     const interval = Math.max(40, Math.min(200, now - trail.curr.at));
     trail.prev = trail.curr;
     trail.curr = next;
@@ -163,13 +166,23 @@ export class MultiPhysicsClient {
     if (curr.sleeping || prev.sleeping) {
       return { x: curr.x, y: curr.y, angle: curr.angle };
     }
-    const t = Math.min(1, Math.max(0, (performance.now() - curr.at) / interval));
-    // Smoothstep softens the 10Hz stair-steps without inventing motion.
-    const s = t * t * (3 - 2 * t);
+    const elapsed = performance.now() - curr.at;
+    const t = elapsed / interval;
+    if (t <= 1) {
+      // Smoothstep softens the stair-steps without inventing motion.
+      const s = t * t * (3 - 2 * t);
+      return {
+        x: prev.x + (curr.x - prev.x) * s,
+        y: prev.y + (curr.y - prev.y) * s,
+        angle: prev.angle + (curr.angle - prev.angle) * s,
+      };
+    }
+    // Keep coasting on the last velocity when samples are late or clamped.
+    const extra = Math.min(90, elapsed - interval) / BASE_FRAME_MS;
     return {
-      x: prev.x + (curr.x - prev.x) * s,
-      y: prev.y + (curr.y - prev.y) * s,
-      angle: prev.angle + (curr.angle - prev.angle) * s,
+      x: curr.x + curr.vx * extra,
+      y: curr.y + curr.vy * extra,
+      angle: curr.angle + curr.va * extra,
     };
   }
 
