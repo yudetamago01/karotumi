@@ -41,6 +41,7 @@ export async function openMultiplayer(app, onHome, sfx) {
     disposed: false, x: 500, rotation: 0, dragPointerId: null, drawn: [], visual: null,
     sprites: new Map(), lastReconnectProbe: 0, lastShapeTerm: null, chatCount: 0, notice: '', dropPending: false, lastTimer: '',
     authCheckInFlight: false, cameraScale: null, cameraSize: '', wasHidden: false,
+    aimTimer: null, aimRevision: 0, aimSent: null, lastAimSentAt: 0,
   };
 
   const showError = message => {
@@ -90,6 +91,8 @@ export async function openMultiplayer(app, onHome, sfx) {
 
   function renderEntry() {
     if (model.disposed) return;
+    clearTimeout(model.aimTimer);
+    model.aimTimer = null;
     model.rotationCleanup?.();
     model.rotationCleanup = null;
     if (model.onRotateKey) window.removeEventListener('keydown', model.onRotateKey);
@@ -194,6 +197,8 @@ export async function openMultiplayer(app, onHome, sfx) {
     if (room.phase === 'lobby') {
       model.drawn = [];
       model.lastShapeTerm = null;
+      clearTimeout(model.aimTimer);
+      model.aimTimer = null;
     }
     app.querySelector('#room-id').textContent = room.id;
     const phase = room.phase === 'lobby' ? '開始待ち' : room.phase === 'ended' ? '終了' : 'プレイ中';
@@ -221,7 +226,13 @@ export async function openMultiplayer(app, onHome, sfx) {
     renderMessages();
     const shapeTurn = `${room.term}:${room.turnDeadline}`;
     if (room.phase === 'playing' && room.term && room.turnDeadline > 0 && room.currentPlayerId === model.user.id && model.lastShapeTerm !== shapeTurn) {
+      clearTimeout(model.aimTimer);
+      model.aimTimer = null;
+      model.x = room.geometry.width / 2;
       model.rotation = 0;
+      model.aimRevision = 0;
+      model.aimSent = null;
+      model.lastAimSentAt = 0;
       model.lastShapeTerm = shapeTurn;
     }
   }
@@ -327,6 +338,8 @@ export async function openMultiplayer(app, onHome, sfx) {
   }
 
   function enterRoom(room) {
+    clearTimeout(model.aimTimer);
+    model.aimTimer = null;
     model.rotationCleanup?.();
     model.rotationCleanup = null;
     if (model.onRotateKey) window.removeEventListener('keydown', model.onRotateKey);
@@ -413,6 +426,23 @@ export async function openMultiplayer(app, onHome, sfx) {
       run(async () => { await api(`/api/rooms/${room.id}/chat`, { body: text }); form.reset(); });
     });
     const canvas = app.querySelector('#multi-stage');
+    const flushAim = () => {
+      model.aimTimer = null;
+      const current = model.room;
+      if (model.disposed || !current || current.currentPlayerId !== model.user.id || !current.turnDeadline || model.dropPending) return;
+      const { x, rotation: angle } = model;
+      if (model.aimSent?.deadline === current.turnDeadline && Math.abs(model.aimSent.x - x) < .5 && Math.abs(model.aimSent.angle - angle) < .001) return;
+      model.aimSent = { x, angle, deadline: current.turnDeadline };
+      model.lastAimSentAt = performance.now();
+      void api(`/api/rooms/${current.id}/aim`, { x, angle, deadline: current.turnDeadline, revision: ++model.aimRevision }).catch(() => {});
+    };
+    const queueAim = () => {
+      if (model.room.currentPlayerId !== model.user.id || !model.room.turnDeadline || model.dropPending) return;
+      if (model.aimTimer) return;
+      const remaining = 120 - (performance.now() - model.lastAimSentAt);
+      if (remaining <= 0) flushAim();
+      else model.aimTimer = setTimeout(flushAim, remaining);
+    };
     canvas.addEventListener('pointerdown', () => {
       memberPanel.classList.remove('open');
       memberToggle.setAttribute('aria-expanded', 'false');
@@ -420,6 +450,7 @@ export async function openMultiplayer(app, onHome, sfx) {
     const rotatePiece = (delta, repeated = false) => {
       if (model.room.currentPlayerId !== model.user.id || !model.room.turnDeadline) return;
       model.rotation = (model.rotation + delta + Math.PI * 2) % (Math.PI * 2);
+      queueAim();
       if (!repeated) sfx('rotate');
     };
     model.rotationCleanup = bindHoldRotation(
@@ -439,9 +470,12 @@ export async function openMultiplayer(app, onHome, sfx) {
       const geometry = model.room.geometry || stageGeometry(bounds.width, bounds.height);
       const view = model.view || multiStageView(bounds.width, bounds.height, model.room.spawnY ?? geometry.spawnTop, geometry);
       model.x = Math.max(0, Math.min(geometry.width, view.worldX(event.clientX - bounds.left)));
+      queueAim();
     };
     const dropCurrent = () => {
       if (model.dropPending || model.room.currentPlayerId !== model.user.id || !model.room.turnDeadline) return;
+      clearTimeout(model.aimTimer);
+      model.aimTimer = null;
       model.dropPending = true;
       model.visual?.predict(model.room.term, model.user.id, model.x, model.room.spawnY, model.rotation);
       sfx('multi-drop');
@@ -557,6 +591,7 @@ export async function openMultiplayer(app, onHome, sfx) {
   return {
     destroy() {
       model.disposed = true;
+      clearTimeout(model.aimTimer);
       window.removeEventListener('pageshow', onAuthReturn);
       window.removeEventListener('focus', onAuthReturn);
       document.removeEventListener('visibilitychange', onAuthReturn);

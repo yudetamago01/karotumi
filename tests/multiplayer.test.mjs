@@ -68,6 +68,9 @@ test('two players join, start, chat, and receive room events', async () => {
   const event = await reader.read();
   assert.match(new TextDecoder().decode(event.value), /event: chat/);
   const currentCookie = started.data.room.currentPlayerId === a.user.id ? a.cookie : b.cookie;
+  const aim = await request(`/api/rooms/${id}/aim`, { method: 'POST', headers: { Cookie: currentCookie }, body: JSON.stringify({ x: 80, angle: Math.PI / 12, deadline: started.data.room.turnDeadline, revision: 1 }) });
+  assert.equal(aim.response.status, 200);
+  assert.equal(aim.data.accepted, true);
   const dropped = await request(`/api/rooms/${id}/drop`, { method: 'POST', headers: { Cookie: currentCookie }, body: JSON.stringify({ x: 500 }) });
   assert.equal(dropped.response.status, 200);
   let updates = '';

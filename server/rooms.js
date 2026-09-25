@@ -79,7 +79,7 @@ function hydrate(row) {
     id: row.id, passwordHash: row.password_hash, phase: data.phase,
     hostId: data.hostId || data.leaderId, members: new Map((data.members || []).map(m => [m.id, { ...m, avatar: m.avatar || null }])),
     order: data.order, turnIndex: data.turnIndex, term: data.term,
-    turnDeadline: data.turnDeadline, spawnY: data.spawnY,
+    turnDeadline: data.turnDeadline, spawnY: data.spawnY, aim: null,
     winnerId: data.winnerId, pieces: [], messages: data.messages || [], geometry: null, lastDropOwnerId: null,
     active: null, listeners: new Set(), dirty: false,
     lastPersist: Date.now(), persistChain: Promise.resolve(), resetTimer: null,
@@ -164,7 +164,7 @@ export async function createRoom(user, password = '') {
     phase: 'lobby', hostId: user.id,
     members: new Map([[user.id, { id: user.id, name: user.name, avatar: user.avatar || null, status: 'playing' }]]),
     order: [user.id], turnIndex: -1, term: null, turnDeadline: 0,
-    spawnY: 160, winnerId: null, pieces: [], messages: [], geometry: null, lastDropOwnerId: null,
+    spawnY: 160, winnerId: null, pieces: [], messages: [], geometry: null, lastDropOwnerId: null, aim: null,
     active: null, listeners: new Set(), dirty: true, resetTimer: null,
     lastPersist: 0, persistChain: Promise.resolve(),
   };
@@ -240,6 +240,7 @@ function resetToLobby(room) {
   room.turnIndex = -1;
   room.term = null;
   room.turnDeadline = 0;
+  room.aim = null;
   room.spawnY = 160;
   room.geometry = null;
   room.lastDropOwnerId = null;
@@ -269,6 +270,7 @@ function chooseTurn(room) {
   }
   room.term = room.pickTerm();
   room.turnDeadline = Date.now() + TURN_MS;
+  room.aim = { x: room.geometry.width / 2, angle: 0, revision: -1 };
   publish(room);
 }
 
@@ -300,6 +302,24 @@ export function acceptShape(room, shape) {
   return room.phase === 'playing' && !room.active && shape?.term === room.term;
 }
 
+export function setAim(room, userId, x, angle, deadline, revision) {
+  if (room.phase !== 'playing' || room.active || room.order[room.turnIndex] !== userId || !room.turnDeadline) return false;
+  if (Date.now() >= room.turnDeadline || Number(deadline) !== room.turnDeadline) return false;
+  const requestedX = Number(x);
+  const requestedAngle = Number(angle);
+  const sequence = Number(revision);
+  if (!Number.isFinite(requestedX) || !Number.isFinite(requestedAngle) || !Number.isSafeInteger(sequence)) return false;
+  if (sequence <= (room.aim?.revision ?? -1)) return false;
+  room.aim = {
+    x: Math.max(0, Math.min(room.geometry.width, requestedX)),
+    angle: Math.max(-Math.PI * 2, Math.min(Math.PI * 2, requestedAngle)),
+    revision: sequence,
+  };
+  // Aim is short-lived control input. Broadcasting/persisting every pointer
+  // movement would flood the room stream and the free database allowance.
+  return true;
+}
+
 export function drop(room, userId, x, _shape, angle = 0) {
   if (room.phase !== 'playing' || room.active || room.order[room.turnIndex] !== userId) throw new Error('今はあなたの番ではありません');
   const selectedShape = CANONICAL_SHAPES[`t:${room.term}`] || CANONICAL_SHAPES[`e:${room.term}`];
@@ -319,6 +339,7 @@ export function drop(room, userId, x, _shape, angle = 0) {
   room.lastDropOwnerId = userId;
   Composite.add(room.engine.world, piece.body);
   room.turnDeadline = 0;
+  room.aim = null;
   publish(room);
 }
 
@@ -370,7 +391,7 @@ export async function addMessage(room, user, body) {
 function stepPhysics(room) {
   if (room.phase !== 'playing') return;
   if (!room.active && room.turnDeadline && Date.now() >= room.turnDeadline) {
-    drop(room, room.order[room.turnIndex], room.geometry.width / 2);
+    drop(room, room.order[room.turnIndex], room.aim?.x ?? room.geometry.width / 2, null, room.aim?.angle ?? 0);
   }
   if (room.active && !room.active.landed) applyDropGravity(room.active.body, room.engine.gravity);
   Engine.update(room.engine, PHYSICS_STEP_MS);

@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import Matter from 'matter-js';
-import { advanceRoomPhysics, drop, publicState, startRoom } from '../server/rooms.js';
+import { advanceRoomPhysics, drop, publicState, setAim, startRoom } from '../server/rooms.js';
 import { CANONICAL_SHAPES } from '../src/canonicalShapes.js';
 import { makeCompoundTextBody } from '../src/physicsBody.js';
 import { applyDropGravity, PHYSICS_STEP_MS } from '../src/dropMotion.js';
@@ -125,16 +125,36 @@ test('a collapsing older word eliminates the current dropper and clears the plat
   assert.notEqual(room.order[room.turnIndex], current);
 });
 
-test('a tilted word below the plate ends the turn before its whole mask passes below', () => {
+test('a tilted word touching the plate edge stays in play until it actually falls below', () => {
   const room = newRoom({ width: 1290, height: 900 });
   room.term = 'カロート';
   const owner = room.order[room.turnIndex];
-  drop(room, owner, room.geometry.width / 2);
+  drop(room, owner, room.base.bounds.max.x - 20);
   const body = room.pieces[0].body;
   Matter.Body.setAngle(body, Math.PI / 2);
-  Matter.Body.setPosition(body, { x: room.geometry.width / 2, y: room.base.bounds.max.y + 20 });
+  Matter.Body.setPosition(body, { x: room.base.bounds.max.x - 20, y: room.base.bounds.max.y + 20 });
   assert.ok(body.bounds.min.y < room.base.bounds.min.y, 'a tall glyph still extends above the plate');
+  assert.equal(isLost(body, room.base), false);
+  Matter.Body.setPosition(body, { x: body.position.x, y: room.base.bounds.max.y + body.bounds.max.y - body.bounds.min.y + 30 });
   assert.equal(isLost(body, room.base), true);
+});
+
+test('the turn timer drops at the latest pointer position and rotation', () => {
+  const room = newRoom({ width: 990, height: 720 });
+  room.term = 'RK';
+  const owner = room.order[room.turnIndex];
+  const selectedX = room.geometry.width / 2 + 125;
+  const deadline = room.turnDeadline;
+  assert.equal(setAim(room, 'b', 100, 0, deadline, 1), false, 'another player cannot move the active word');
+  assert.equal(setAim(room, owner, selectedX, Math.PI / 12, deadline - 1, 1), false, 'old turns cannot move the word');
+  assert.equal(setAim(room, owner, selectedX, Math.PI / 12, deadline, 2), true);
+  assert.equal(setAim(room, owner, room.geometry.width / 2, 0, deadline, 1), false, 'late requests cannot overwrite a newer aim');
+  room.turnDeadline = Date.now() - 1;
+  advanceRoomPhysics(room, room.physicsTime + PHYSICS_STEP_MS * 2);
+  assert.equal(room.pieces.length, 1);
+  const piece = room.pieces[0];
+  assert.ok(Math.abs(piece.body.position.x + piece.offsetX - selectedX) < 1);
+  assert.ok(Math.abs(piece.body.angle - Math.PI / 12) < .02);
 });
 
 test('local multiplayer motion matches the server and predicts an immediate drop', () => {

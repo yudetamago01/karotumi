@@ -6,7 +6,7 @@ import zlib from 'node:zlib';
 import { fileURLToPath } from 'node:url';
 import {
   databaseReady, createRoom, getRoom, joinRoom, publicState, subscribe,
-  startRoom, acceptShape, drop, chooseAfterLoss, leaveRoom, addMessage, persist,
+  startRoom, acceptShape, setAim, drop, chooseAfterLoss, leaveRoom, addMessage, persist,
 } from './rooms.js';
 import { leaderboard } from './ranking.js';
 import { startSoloRun, finishSoloRun } from './soloRuns.js';
@@ -222,7 +222,7 @@ const server = http.createServer(async (req, res) => {
         const room = await createRoom(user, password);
         json(res, 201, { room: publicState(room, user.id) }); return;
       }
-      const match = pathname.match(/^\/api\/rooms\/([^/]+)(?:\/(join|start|shape|drop|chat|choice|leave|events))?$/);
+      const match = pathname.match(/^\/api\/rooms\/([^/]+)(?:\/(join|start|shape|aim|drop|chat|choice|leave|events))?$/);
       const id = cleanRoomId(match?.[1]);
       if (!id) { json(res, 404, { error: 'ルームが見つかりません' }); return; }
       const room = await getRoom(id);
@@ -249,6 +249,8 @@ const server = http.createServer(async (req, res) => {
       if (action === 'start') startRoom(room, user, input.viewport);
       else if (action === 'shape') {
         if (!acceptShape(room, input)) throw new Error('文字の形を登録できませんでした');
+      } else if (action === 'aim') {
+        json(res, 200, { accepted: setAim(room, user.id, input.x, input.angle, input.deadline, input.revision) }); return;
       } else if (action === 'drop') drop(room, user.id, input.x, input.shape, input.angle);
       else if (action === 'choice') chooseAfterLoss(room, user.id, input.choice);
       else if (action === 'leave') leaveRoom(room, user.id);
