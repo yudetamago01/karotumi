@@ -87,7 +87,7 @@ test('an improvement is visible right away even if a list read was in flight', a
   process.env.DEV_LOGIN = '1';
   process.env.NODE_ENV = 'development';
   try {
-    const { leaderboard, submitScore } = await import('../server/ranking.js');
+    const { leaderboard, submitScore, bestCount } = await import('../server/ranking.js');
     const user = { id: 'rank-cache', name: 'Cache', avatar: null };
     await submitScore(user, 3);
     await leaderboard();
@@ -99,6 +99,8 @@ test('an improvement is visible right away even if a list read was in flight', a
       'a new best from another user is not stuck behind a stale cache');
     assert.ok(scores.some(score => score.userId === user.id && score.bestCount === 3),
       'existing lower scores stay on the board');
+    assert.equal(await bestCount(user.id), 3, 'a personal best is readable even outside the top 20');
+    assert.equal(await bestCount('missing-user'), 0);
   } finally {
     if (previousLogin === undefined) delete process.env.DEV_LOGIN;
     else process.env.DEV_LOGIN = previousLogin;

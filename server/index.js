@@ -8,7 +8,7 @@ import {
   databaseReady, createRoom, getRoom, joinRoom, publicState, subscribe,
   startRoom, acceptShape, setAim, drop, chooseAfterLoss, leaveRoom, addMessage, persist,
 } from './rooms.js';
-import { leaderboard } from './ranking.js';
+import { leaderboard, bestCount } from './ranking.js';
 import { startSoloRun, finishSoloRun } from './soloRuns.js';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -129,7 +129,16 @@ const server = http.createServer(async (req, res) => {
     if (req.method === 'POST' && !sameOrigin(req)) { json(res, 403, { error: 'Origin mismatch' }); return; }
     if (pathname === '/api/health') { json(res, 200, { ok: true, database: databaseReady() }); return; }
     if (pathname === '/api/config') { json(res, 200, { oauthReady, devLogin, databaseReady: databaseReady() }); return; }
-    if (pathname === '/api/me') { json(res, 200, { user: userFor(req) }); return; }
+    if (pathname === '/api/me') {
+      const user = userFor(req);
+      let best = 0;
+      if (user) {
+        try { best = await bestCount(user.id); }
+        catch { best = 0; }
+      }
+      json(res, 200, { user, bestCount: best });
+      return;
+    }
 
     if (pathname === '/auth/start' && req.method === 'GET') {
       if (!oauthReady) { fail(res, new Error('Karotter OAuthが未設定です'), 503); return; }

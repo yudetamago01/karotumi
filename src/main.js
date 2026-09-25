@@ -237,13 +237,28 @@ async function showRanking() {
     // showed a board from before the personal best was stored.
     if (me.user) await syncPendingScore();
     if (screen !== 'ranking') return;
-    const scoreData = await rankingApi('/api/ranking');
+    const [scoreData, meAfter] = await Promise.all([
+      rankingApi('/api/ranking'),
+      me.user ? rankingApi('/api/me').catch(() => me) : Promise.resolve(me),
+    ]);
     if (screen !== 'ranking') return;
     const scores = Array.isArray(scoreData.scores) ? scoreData.scores.slice(0, 20) : [];
     document.querySelector('#ranking-list').innerHTML = scores.length
       ? scores.map((score, index) => `<li><span class="ranking-place">${index + 1}</span>${score.avatar ? `<img src="${escapeHtml(score.avatar)}" alt="" loading="lazy" referrerpolicy="no-referrer">` : ''}<span class="ranking-name">${escapeHtml(score.name)}</span><strong>${Number(score.bestCount) || 0}<small>こ</small></strong></li>`).join('')
       : '<li class="ranking-empty">まだ記録がありません</li>';
-    notice.textContent = '';
+    const verified = Number(meAfter.bestCount) || Number(meAfter.user && scores.find(s => s.userId === meAfter.user.id)?.bestCount) || 0;
+    const localBest = Number(localStorage.getItem('karotter-stack-best') || best || 0);
+    if (verified > 0) {
+      if (verified > best) {
+        best = verified;
+        localStorage.setItem('karotter-stack-best', String(best));
+      }
+      notice.textContent = `あなたのベスト ${verified}こ${localBest > verified ? `（この端末では ${localBest}こ。検証待ちの可能性があります）` : ''}`;
+    } else if (localBest > 0) {
+      notice.textContent = `この端末のベストは ${localBest}こです。ログインしてプレイするとランキングに記録されます。`;
+    } else {
+      notice.textContent = '';
+    }
   } catch (error) {
     if (screen === 'ranking') notice.textContent = `${error.message}。サーバーに接続できません。`;
   }
@@ -303,7 +318,7 @@ function dequeuePiece() {
   if (game.ranked) {
     const piece = game.ranked.pieces[game.ranked.index++];
     if (piece) return piece;
-    game.ranked = null;
+    // Keep game.ranked so game over can still submit this session's events.
   }
   if (!game.queue.length) game.queue.push(...splitTerm(game.pickTerm()));
   return game.queue.shift();
@@ -541,6 +556,12 @@ function settlePiece() {
   burst(body.position.x, body.bounds.min.y, 12);
   game.active = null;
   setRotateEnabled(true);
+  // The ranked piece list is the only verifiable run. End before local
+  // fallback pieces would inflate the on-screen score without a submit.
+  if (game.ranked && game.ranked.index >= game.ranked.pieces.length) {
+    gameOver();
+    return;
+  }
   const highest = game.blocks.reduce((y, block) => Math.min(y, block.bounds.min.y), game.base.position.y);
   game.spawnY = Math.min(game.spawnTop, highest - 155);
   game.pending = game.next;

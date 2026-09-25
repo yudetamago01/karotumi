@@ -59,6 +59,17 @@ export async function leaderboard() {
   return scores;
 }
 
+export async function bestCount(userId) {
+  if (!userId) return 0;
+  if (useLocalScores()) return localScores.get(userId)?.best_count || 0;
+  if (!dbReady()) return 0;
+  // Bypass the board cache: a personal best must show even outside the top 20.
+  const rows = await dbRequest(
+    `karotter_stack_solo_scores?user_id=eq.${encodeURIComponent(userId)}&select=best_count&limit=1`,
+  );
+  return Number(rows?.[0]?.best_count) || 0;
+}
+
 export async function submitScore(user, count) {
   if (!Number.isSafeInteger(count) || count < 1 || count > 10000) throw new Error('記録は1〜10000個で送信してください');
   if (!user?.id || !user?.name) throw new Error('Karotterにログインしてください');
