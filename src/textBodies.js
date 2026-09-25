@@ -1,5 +1,6 @@
 import { makeCompoundTextBody } from './physicsBody.js';
 import { CANONICAL_SHAPES } from './canonicalShapes.js';
+import { getGameEmojiImage } from './emojiAssets.js';
 
 const emojiPattern = /[\p{Extended_Pictographic}\p{Regional_Indicator}\p{Emoji_Presentation}\u20e3]/u;
 const segmenter = new Intl.Segmenter('ja', { granularity: 'grapheme' });
@@ -11,7 +12,7 @@ export function splitTerm(term) {
   const pieces = [];
   let word = '';
   for (const { segment } of segmenter.segment(term)) {
-    if (emojiPattern.test(segment)) {
+    if (emojiPattern.test(segment) && segment !== '♡') {
       if (word) pieces.push({ text: word, emoji: false });
       word = '';
       pieces.push({ text: segment, emoji: true });
@@ -21,10 +22,8 @@ export function splitTerm(term) {
   return pieces;
 }
 
-function fontFor(size, emoji) {
-  return emoji
-    ? `${size}px "Segoe UI Emoji", "Apple Color Emoji", sans-serif`
-    : `900 ${size}px "M PLUS Rounded 1c", sans-serif`;
+function fontFor(size) {
+  return `900 ${size}px "M PLUS Rounded 1c", sans-serif`;
 }
 
 function occupiedRectangles(image, cell) {
@@ -82,14 +81,25 @@ export function makeTextSprite(piece, stageWidth, color = '#086b9e') {
   const key = `${piece.text}|${piece.emoji}|${Math.round(maxWidth)}|${color}`;
   if (spriteCache.has(key)) return spriteCache.get(key);
 
+  if (piece.emoji) {
+    const image = getGameEmojiImage(piece.text);
+    if (!canonical || !image) throw new Error(`絵文字画像の準備ができていません: ${piece.text}`);
+    const canvas = document.createElement('canvas');
+    canvas.width = canonical.width;
+    canvas.height = canonical.height;
+    canvas.getContext('2d').drawImage(image, 0, 0, canvas.width, canvas.height);
+    const sprite = { canvas, width: canvas.width, height: canvas.height, rectangles: canonical.rectangles, piece, cell: 7 };
+    spriteCache.set(key, sprite);
+    return sprite;
+  }
+
   const canvas = document.createElement('canvas');
   const ctx = canvas.getContext('2d', { willReadFrequently: true });
-  let size = piece.emoji ? Math.min(76, stageWidth * .18) : Math.min(62, stageWidth * .13);
-  size = Math.max(piece.emoji ? 48 : 34, Math.floor(size));
-  ctx.font = fontFor(size, piece.emoji);
+  let size = Math.max(34, Math.floor(Math.min(62, stageWidth * .13)));
+  ctx.font = fontFor(size);
   while (ctx.measureText(piece.text).width > maxWidth - 18 && size > 16) {
     size -= 2;
-    ctx.font = fontFor(size, piece.emoji);
+    ctx.font = fontFor(size);
   }
   const naturalWidth = ctx.measureText(piece.text).width;
   const horizontalScale = Math.min(1, (maxWidth - 18) / naturalWidth);
@@ -97,22 +107,17 @@ export function makeTextSprite(piece, stageWidth, color = '#086b9e') {
   const height = Math.ceil(size * 1.55 + 18);
   canvas.width = width;
   canvas.height = height;
-  ctx.font = fontFor(size, piece.emoji);
+  ctx.font = fontFor(size);
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
   ctx.translate(width / 2, height / 2);
   ctx.scale(horizontalScale, 1);
-  if (!piece.emoji) {
-    ctx.lineWidth = Math.max(2, size * .045);
-    ctx.lineJoin = 'round';
-    ctx.strokeStyle = '#fff';
-    ctx.strokeText(piece.text, 0, 0);
-    ctx.fillStyle = color;
-    ctx.fillText(piece.text, 0, 0);
-  } else {
-    ctx.fillStyle = '#086b9e';
-    ctx.fillText(piece.text, 0, 0);
-  }
+  ctx.lineWidth = Math.max(2, size * .045);
+  ctx.lineJoin = 'round';
+  ctx.strokeStyle = '#fff';
+  ctx.strokeText(piece.text, 0, 0);
+  ctx.fillStyle = color;
+  ctx.fillText(piece.text, 0, 0);
 
   let cell = 7;
   let rectangles = canonical?.rectangles;

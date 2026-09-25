@@ -1,4 +1,5 @@
 import { makeTextSprite } from './textBodies.js';
+import { hasGameEmoji, loadGameEmojiImages, termLabelHtml } from './emojiAssets.js';
 import { TERM_DEFINITIONS } from './termDefinitions.js';
 import { bindHoldRotation, rotationIcon } from './rotationControls.js';
 import { multiStageView } from './multiStageView.js';
@@ -35,7 +36,7 @@ async function api(path, body) {
 }
 
 export async function openMultiplayer(app, onHome, sfx) {
-  await document.fonts.ready;
+  await Promise.all([document.fonts.ready, loadGameEmojiImages()]);
   const model = {
     config: null, user: null, room: null, stream: null, frame: 0,
     disposed: false, x: 500, rotation: 0, dragPointerId: null, drawn: [], visual: null,
@@ -207,7 +208,7 @@ export async function openMultiplayer(app, onHome, sfx) {
     app.querySelector('#turn-name').textContent = room.phase === 'ended'
       ? (room.members.find(m => m.id === room.winnerId)?.name || '勝者なし')
       : room.phase === 'lobby' ? '参加者を待っています' : `${turnPlayer?.name || '接続待ち'} の番`;
-    app.querySelector('#next-term').textContent = room.term || '—';
+    app.querySelector('#next-term').innerHTML = termLabelHtml(room.term || '—');
     const me = room.members.find(m => m.id === model.user.id);
     const leaderId = room.leaderId || room.hostId;
     const leader = room.members.find(m => m.id === leaderId);
@@ -239,7 +240,7 @@ export async function openMultiplayer(app, onHome, sfx) {
 
   function spriteFor(term) {
     if (model.sprites.has(term)) return model.sprites.get(term);
-    const sprite = makeTextSprite({ text: term, emoji: /[\p{Extended_Pictographic}\p{Emoji_Presentation}]/u.test(term) }, TEXT_STAGE_WIDTH, colors[term.length % colors.length]);
+    const sprite = makeTextSprite({ text: term, emoji: hasGameEmoji(term) }, TEXT_STAGE_WIDTH, colors[term.length % colors.length]);
     model.sprites.set(term, sprite);
     return sprite;
   }
@@ -503,7 +504,7 @@ export async function openMultiplayer(app, onHome, sfx) {
           return Math.abs(dx * cosine + dy * sine) < item.w / 2 && Math.abs(dy * cosine - dx * sine) < item.h / 2;
         });
         if (hit) {
-          app.querySelector('#term-title').textContent = hit.term;
+          app.querySelector('#term-title').innerHTML = termLabelHtml(hit.term);
           app.querySelector('#term-description').textContent = TERM_DEFINITIONS[hit.term] || 'カロッターの用語です。';
           app.querySelector('#term-dialog').hidden = false;
         }

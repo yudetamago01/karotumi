@@ -19,6 +19,8 @@ npm run dev:server
 
 用語は画面下の回転ボタン、または Q・E キーで15度ずつ回転できます。回転ボタンは押し続けると連続で回ります。マウスではクリック、スマホでは指を離すと落下します。
 
+ゲーム内の 👈・💪・🥕 は、Microsoft の [Fluent Emoji](https://github.com/microsoft/fluentui-emoji) の3D画像を同梱しています。すべての端末で同じ画像と当たり判定を使います。画像のライセンスは [src/assets/emoji/LICENSE.txt](src/assets/emoji/LICENSE.txt) を参照してください。
+
 ## マルチプレイ
 
 - ルーム作成者がゲームリーダーです。2人以上集まるまで開始できず、開始操作はリーダーだけが行えます。

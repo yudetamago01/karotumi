@@ -1,6 +1,7 @@
 import Matter from 'matter-js';
 import { createTermPicker } from './termPicker.js';
 import { splitTerm, makeTextSprite, makeTextBody } from './textBodies.js';
+import { loadGameEmojiImages, termLabelHtml } from './emojiAssets.js';
 import { openMultiplayer } from './multi.js';
 import { bindHoldRotation, rotationIcon } from './rotationControls.js';
 import { stageGeometry, TEXT_STAGE_WIDTH } from './stageGeometry.js';
@@ -305,8 +306,9 @@ async function startGame() {
   stopGame();
   screen = 'loading';
   const requestedSize = { width: window.innerWidth, height: window.innerHeight };
-  const [, rankedSession] = await Promise.all([
+  const [, , rankedSession] = await Promise.all([
     document.fonts.ready,
+    loadGameEmojiImages(),
     rankingApi('/api/solo/start', requestedSize, { signal: AbortSignal.timeout(7000) }).catch(() => null),
   ]);
   if (screen !== 'loading') return;
@@ -345,7 +347,7 @@ async function startGame() {
   };
   game.pending = dequeuePiece();
   game.next = dequeuePiece();
-  document.querySelector('#next-word').textContent = game.next.text;
+  document.querySelector('#next-word').innerHTML = termLabelHtml(game.next.text);
   sizeStage();
   game.resizeObserver = new ResizeObserver(sizeStage);
   game.resizeObserver.observe(canvas);
@@ -537,7 +539,7 @@ function settlePiece() {
   game.spawnY = Math.min(game.spawnTop, highest - 155);
   game.pending = game.next;
   game.next = dequeuePiece();
-  document.querySelector('#next-word').textContent = game.next.text;
+  document.querySelector('#next-word').innerHTML = termLabelHtml(game.next.text);
 }
 function checkLoss() {
   if (!game || game.over) return;

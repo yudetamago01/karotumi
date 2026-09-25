@@ -420,3 +420,5 @@ button:focus-visible, a:focus-visible, input:focus-visible {
 @media (prefers-reduced-motion: reduce) {
   *, *:before, *:after { transition: none !important; animation: none !important; }
 }
+
+.term-emoji { display: inline-block; width: 1em; height: 1em; vertical-align: -.12em; object-fit: contain; }
