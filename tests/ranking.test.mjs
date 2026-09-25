@@ -80,3 +80,29 @@ test('a lower solo score cannot replace the best', async () => {
     else process.env.DEV_LOGIN = previous;
   }
 });
+
+test('an improvement is visible right away even if a list read was in flight', async () => {
+  const previousLogin = process.env.DEV_LOGIN;
+  const previousEnv = process.env.NODE_ENV;
+  process.env.DEV_LOGIN = '1';
+  process.env.NODE_ENV = 'development';
+  try {
+    const { leaderboard, submitScore } = await import('../server/ranking.js');
+    const user = { id: 'rank-cache', name: 'Cache', avatar: null };
+    await submitScore(user, 3);
+    await leaderboard();
+    // Another player improves while this process may still hold a short cache.
+    const other = { id: 'rank-cache-2', name: 'Other', avatar: null };
+    await submitScore(other, 12);
+    const scores = await leaderboard();
+    assert.ok(scores.some(score => score.userId === other.id && score.bestCount === 12),
+      'a new best from another user is not stuck behind a stale cache');
+    assert.ok(scores.some(score => score.userId === user.id && score.bestCount === 3),
+      'existing lower scores stay on the board');
+  } finally {
+    if (previousLogin === undefined) delete process.env.DEV_LOGIN;
+    else process.env.DEV_LOGIN = previousLogin;
+    if (previousEnv === undefined) delete process.env.NODE_ENV;
+    else process.env.NODE_ENV = previousEnv;
+  }
+});

@@ -65,7 +65,10 @@ function rememberRun(run, tickCount) {
     runId: run.id, events: run.events,
     endWait: Math.min(500, Math.max(0, tickCount - run.lastTick)),
   }));
-  void syncPendingScore();
+  void syncPendingScore().then(result => {
+    // A new best should appear on an open ranking list without a manual reload.
+    if (result?.updated && screen === 'ranking') void showRanking();
+  });
 }
 function syncPendingScore() {
   if (scoreSync) return scoreSync;
@@ -224,14 +227,17 @@ async function showRanking() {
     });
   };
   try {
-    const [data, me, config] = await Promise.all([
-      rankingApi('/api/ranking'), rankingApi('/api/me').catch(() => ({})), rankingApi('/api/config').catch(() => ({})),
+    const [me, config] = await Promise.all([
+      rankingApi('/api/me').catch(() => ({})),
+      rankingApi('/api/config').catch(() => ({})),
     ]);
     if (screen !== 'ranking') return;
-    renderLogin(data.user || me.user, config);
-    const synced = data.user || me.user ? await syncPendingScore() : null;
+    renderLogin(me.user, config);
+    // Submit any finished run BEFORE reading the list. Fetching in parallel
+    // showed a board from before the personal best was stored.
+    if (me.user) await syncPendingScore();
     if (screen !== 'ranking') return;
-    const scoreData = synced?.updated ? await rankingApi('/api/ranking') : data;
+    const scoreData = await rankingApi('/api/ranking');
     if (screen !== 'ranking') return;
     const scores = Array.isArray(scoreData.scores) ? scoreData.scores.slice(0, 20) : [];
     document.querySelector('#ranking-list').innerHTML = scores.length
