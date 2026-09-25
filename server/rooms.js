@@ -470,7 +470,7 @@ setInterval(() => {
       if (room.phase === 'playing') {
         advanceRoomPhysics(room);
         const moving = room.active || room.pieces.some(p => !p.body.isSleeping);
-        if (moving && Date.now() - (room.lastPoseAt || 0) >= 100) publishPoses(room);
+        if (moving && Date.now() - (room.lastPoseAt || 0) >= 50) publishPoses(room);
       }
       if (room.dirty && Date.now() - (room.lastPersistAttempt || 0) > 5000) {
         persist(room).catch(error => console.error('Room persistence:', error.message));

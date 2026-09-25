@@ -276,8 +276,11 @@ export async function openMultiplayer(app, onHome, sfx) {
     const geometry = model.room.geometry || stageGeometry(rect.width, rect.height);
     const targetView = multiStageView(rect.width, rect.height, model.room.spawnY ?? geometry.spawnTop, geometry);
     const size = `${rect.width}:${rect.height}`;
+    const falling = Boolean(model.room.activeId);
     if (model.cameraSize !== size || model.cameraScale === null) model.cameraScale = targetView.targetScale;
-    else model.cameraScale += (targetView.targetScale - model.cameraScale) * .12;
+    // Ease the camera only while the plate is still. Moving it during a drop
+    // makes every stacked word slide on screen.
+    else if (!falling) model.cameraScale += (targetView.targetScale - model.cameraScale) * .08;
     model.cameraSize = size;
     const view = multiStageView(rect.width, rect.height, model.room.spawnY ?? geometry.spawnTop, geometry, model.cameraScale);
     model.view = view;

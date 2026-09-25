@@ -29,3 +29,33 @@ test('a drop is visible immediately and stale worker frames cannot move it backw
     globalThis.Worker = originalWorker;
   }
 });
+
+test('confirmed pieces blend between server poses instead of jumping', () => {
+  const originalWorker = globalThis.Worker;
+  globalThis.Worker = class {
+    postMessage() {}
+    terminate() {}
+  };
+  try {
+    const geometry = stageGeometry(390, 700);
+    const client = new MultiPhysicsClient(geometry);
+    const id = 'piece-1';
+    client.sync({
+      phase: 'playing',
+      pieces: [{ id, term: 'RK', ownerId: 'a', x: 100, y: 200, angle: 0, vx: 0, vy: 0, va: 0, sleeping: false }],
+      activeId: id, activeLanded: false, currentPlayerId: 'a', term: 'RK', turnDeadline: 1,
+    });
+    const first = client.pose(id);
+    assert.equal(first.x, 100);
+    client.applyPoses({
+      pieces: [{ id, term: 'RK', ownerId: 'a', x: 140, y: 240, angle: 0, vx: 0, vy: 0, va: 0, sleeping: false }],
+      activeId: id, activeLanded: false,
+    });
+    const mid = client.pose(id);
+    assert.ok(mid.x > 100 && mid.x < 140, 'mid-frame is between server samples');
+    assert.ok(mid.y > 200 && mid.y < 240);
+    client.dispose();
+  } finally {
+    globalThis.Worker = originalWorker;
+  }
+});
